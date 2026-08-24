@@ -67,27 +67,82 @@ character reference sheets — the full pipeline (style scaffold, no-text guard,
 checklist, provenance) lives in `cast/fieldnote.md`.
 
 
-## Video Generation (Veo 3.1)
+## Video Generation
+
+Two backends behind one command. `--model` picks the model; `--provider` picks who serves
+it (`auto` uses the model's default). Adding a model does not change any existing call.
+
+| `--model` | Backend | Res | Durations | Frames | Audio | Price |
+|---|---|---|---|---|---|---|
+| `fast` (default) | Gemini SDK (Veo 3.1 Lite) | 720p/1080p | 4, 6, 8 | first + last | yes | ~$0.15/s |
+| `standard` | Gemini SDK (Veo 3.1) | 720p/1080p/4K | 4, 6, 8 | first + last | yes | ~$0.40/s |
+| `hailuo-3` | OpenRouter *or* MiniMax direct | 2K (768P direct) | 5–15 (4–15 direct) | first + last | yes | $0.13/s (768P $0.08/s) |
+| `hailuo-2.3` | OpenRouter | 1080p | 6, 10 | **first only** | no | $0.0817/s |
 
 ```bash
-# Quick preview
+# Unchanged — the original Veo path
 uv run ~/.claude/skills/media/scripts/generate_media.py video "Aerial shot of Dubai at sunset" --model fast --duration 4
 
-# Higher quality
-uv run ~/.claude/skills/media/scripts/generate_media.py video "Professional office time-lapse" --model standard --duration 8
+# Hailuo 3 via OpenRouter (needs OPENROUTER_API_KEY)
+uv run ~/.claude/skills/media/scripts/generate_media.py video "A lighthouse beam sweeps the harbour" \
+  --model hailuo-3 --duration 6 --aspect 21:9
 
-# Vertical for TikTok/Reels
-uv run ~/.claude/skills/media/scripts/generate_media.py video "Eye-catching product reveal" --aspect 9:16
+# Hailuo 3 direct — unlocks the cheaper 768P draft tier (needs MINIMAX_API_KEY)
+uv run ~/.claude/skills/media/scripts/generate_media.py video "..." \
+  --model hailuo-3 --provider minimax --resolution 768P --duration 4
 
-# Image-to-video
-uv run ~/.claude/skills/media/scripts/generate_media.py video "Animate this scene" --from-image hero.png
+# First-and-last-frame: the clip starts here and lands there
+uv run ~/.claude/skills/media/scripts/generate_media.py video "She opens the umbrella as the camera pulls back" \
+  --model hailuo-3 --first-frame a.png --last-frame b.png --duration 6
+
+# Style/identity references (a DIFFERENT mode — cannot combine with frames)
+uv run ~/.claude/skills/media/scripts/generate_media.py video "..." --model hailuo-3 --reference sara.png
 ```
 
-**Models:**
-- `fast` (default) — Veo 3.1 Fast. ~$0.15/sec ($0.60-1.20/clip).
-- `standard` — Veo 3.1. ~$0.40/sec ($1.60-3.20/clip).
+**Every paid call is gated.** The cost is printed and confirmed before submission; pass
+`--yes` to skip the prompt (required in non-interactive runs). Generation is async and
+slow — a 6s 2K Hailuo clip takes ~350s; `--timeout` defaults to 900s.
 
-**Durations:** `4`, `6`, `8` seconds
+**Frames vs references are mutually exclusive modes** — a model rule, not a provider quirk.
+The CLI refuses the combination rather than letting OpenRouter silently drop your
+references. Put identity into the frame images instead (generate them with `image
+--reference`). See `references/hailuo-prompting.md`.
+
+Check live capabilities any time: `generate_media.py caps --model hailuo-3`.
+
+## Story mode — storyboard-driven multi-shot video
+
+One image call draws every shot as a cell in a single grid, so all panels share one palette,
+one lighting setup and one rendering of each character. Those panels are then chained
+through the video model: clip *i* runs from panel *i* to panel *i+1*, pinning both ends of
+every cut to art you approved. N panels → N-1 clips → one continuous film.
+
+```bash
+S=~/.claude/skills/media/scripts/generate_media.py
+uv run $S story plan     spec.json          # dry run: every prompt + total cost, no spend
+uv run $S story board    spec.json          # 1 image call → contact sheet → sliced panels
+uv run $S story shots    spec.json          # chain the panels into clips (cost-gated)
+uv run $S story shots    spec.json --only desk turn   # re-roll just these shots
+uv run $S story assemble spec.json          # ffmpeg concat → final mp4
+```
+
+Phases are separate so you approve between them, and `manifest.json` records a sha256 of
+the spec, the sheet, every panel and every clip as it goes — a crash on clip 6 never loses
+clips 1–5. See `examples/story-spec.json` for a complete spec.
+
+Spec shape: `style` (one look for the whole film), `cast` (name → reference image),
+`board` (`cols`/`rows`/`image_model`/`size`/`inset`/`autotrim`), and `shots[]`, each with
+`id`, `panel` (what gets drawn), `action`, `camera`, optional `sound`
+(`ambience`/`dialogue`/`music`) and `duration`.
+
+`chain` is `bridge` (default — both ends pinned; the last shot is the closing frame and
+generates no clip of its own) or `anchor` (only the opening frame pinned, N panels → N
+clips, for shots that end somewhere you can't draw in advance).
+
+Panels are sliced with a fixed `inset` to absorb gutter wobble, then `autotrim` removes any
+frame the model drew inside the cell — image models add keylines and paper margins however
+firmly the prompt forbids them, and a drawn border becomes a bar baked into every frame of
+the clip.
 
 ## Voice Generation (ElevenLabs)
 
@@ -164,8 +219,16 @@ See `~/.claude/skills/media/prompt-templates.md` for 20+ ready-to-use templates 
 | Video 8s (fast) | Veo 3.1 Fast | ~$1.20 |
 | Video 4s (standard) | Veo 3.1 | ~$1.60 |
 | Video 8s (standard) | Veo 3.1 | ~$3.20 |
+| Video 6s (hailuo-3, 2K) | MiniMax H3 | ~$0.78 |
+| Video 6s (hailuo-3, 768P direct) | MiniMax H3 | ~$0.48 |
+| Video 4s (hailuo-3, 768P direct) | MiniMax H3 | ~$0.32 |
 | Voice 500 chars (v3) | ElevenLabs v3 | ~$0.15 |
 | Voice 500 chars (flash) | ElevenLabs Flash | ~$0.08 |
+| Story: 4-panel board + 3 clips (2K) | Gemini + H3 | ~$2.46 |
+
+Hailuo keepers cost the same on either provider; **rejects are what differ**. Drafting at
+768P direct and only paying 2K for shots you keep is the cheaper loop when you expect to
+re-roll — which on a chain, you will.
 
 ## Panel rendering (Blender)
 
@@ -237,8 +300,17 @@ npm i -g svgo
 ## Required API Keys
 
 Set these in `~/.zshrc` (or `~/.env`):
-- `GEMINI_API_KEY` — For Gemini image + Veo video (aistudio.google.com)
-- `ELEVENLABS_API_KEY` — For voiceover TTS (elevenlabs.io)
+- `GEMINI_API_KEY` — Gemini images + Veo video, and the `story` board (aistudio.google.com)
+- `ELEVENLABS_API_KEY` — Voiceover TTS (elevenlabs.io)
+- `OPENROUTER_API_KEY` — `--model hailuo-*` on `--provider openrouter` (openrouter.ai/keys)
+- `MINIMAX_API_KEY` — `--provider minimax`, incl. the 768P tier (platform.minimax.io)
+
+Only the keys for backends you actually call are needed; each is checked at the point of use
+and names itself in the error.
+
+Voice presets default to stock ElevenLabs voices. Point one at your own clone with
+`ELEVENLABS_VOICE_MY_VOICE` (also `_ARABIC_MALE`, `_ARABIC_FEMALE`, `_ENGLISH_MALE`,
+`_ENGLISH_FEMALE`).
 
 ## Output
 

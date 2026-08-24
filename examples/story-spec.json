@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "title": "shortcut",
+  "model": "hailuo-3",
+  "provider": "auto",
+  "aspect": "16:9",
+  "resolution": "2K",
+  "duration": 6,
+  "chain": "bridge",
+
+  "style": "field-note illustration: loose ink linework over watercolour washes on warm off-white paper, muted earth palette, soft daylight from the left, no outlines on the background",
+
+  "cast": {
+    "sara": "../cast/refs/ref-sara.jpg",
+    "khalid": "../cast/refs/ref-khalid.jpg",
+    "style": "../cast/refs/style-01.jpg"
+  },
+
+  "board": {
+    "cols": 2,
+    "rows": 2,
+    "image_model": "pro",
+    "size": "4K",
+    "inset": 0.03
+  },
+
+  "shots": [
+    {
+      "id": "desk",
+      "panel": "wide shot of an open-plan office at mid-morning. Sara sits at a cluttered desk in a rust-red cable-knit sweater, laptop open, a paper cup beside the keyboard. Khalid stands two desks away with his back half-turned.",
+      "action": "Sara stops typing and lifts her gaze from the screen toward Khalid",
+      "camera": "slow push in",
+      "sound": {
+        "ambience": "low open-plan hum, a distant printer cycling, one keyboard still typing off-screen",
+        "music": "N/A"
+      }
+    },
+    {
+      "id": "turn",
+      "panel": "medium two-shot. Sara has half-risen from her chair, one hand still on the desk. Khalid has turned fully to face her, eyebrows raised.",
+      "action": "Khalid turns to face her and takes one step closer to the desk",
+      "camera": "locked static shot",
+      "sound": {
+        "ambience": "the office hum drops as the typing stops",
+        "dialogue": [
+          {
+            "speaker": "Sara",
+            "lang": "English",
+            "delivery": "quietly, without alarm",
+            "line": "Come look at this before you push it."
+          }
+        ],
+        "music": "N/A"
+      }
+    },
+    {
+      "id": "screen",
+      "panel": "over-the-shoulder close shot of the laptop screen from behind both of them, the screen itself abstract and unreadable, their two silhouettes framing it.",
+      "action": "Both lean in toward the screen; Khalid rests one hand on the back of her chair",
+      "camera": "slow arc shot",
+      "sound": {
+        "ambience": "close room tone, one chair creak, a shirt sleeve brushing fabric",
+        "music": "a single sustained low string note entering under the last second"
+      }
+    },
+    {
+      "id": "hold",
+      "panel": "the same over-the-shoulder framing, held: the two silhouettes now still and close together, the screen glow on their faces."
+    }
+  ]
+}

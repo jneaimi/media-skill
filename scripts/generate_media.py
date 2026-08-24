@@ -49,6 +49,13 @@ VIDEO_MODELS = {
     "fast": "veo-3.1-lite-generate-preview",  # "fast" variant was retired; "lite" is the current low-cost tier
 }
 
+# Models served over HTTP by video_providers.py rather than the Gemini SDK. The registry
+# there is the source of truth for routing and capabilities; this list only exists so
+# argparse can offer the choices without importing a module that may not be needed.
+HTTP_VIDEO_MODELS = ["hailuo-3", "hailuo-2.3"]
+ALL_VIDEO_MODELS = list(VIDEO_MODELS) + HTTP_VIDEO_MODELS
+VIDEO_PROVIDERS = ["auto", "gemini", "openrouter", "minimax"]
+
 VOICE_MODELS = {
     "v3": "eleven_v3",
     "flash": "eleven_flash_v2_5",
@@ -58,12 +65,13 @@ VALID_ASPECT_RATIOS = ["1:1", "2:3", "3:2", "16:9", "9:16", "21:9"]
 VALID_IMAGE_SIZES = ["1K", "2K", "4K"]
 VALID_VIDEO_DURATIONS = [4, 6, 8]
 
-# Voice presets — overridable via env vars
+# Voice presets — stock ElevenLabs voices by default. Point any of these at your own
+# cloned voice by exporting the matching env var; no voice ID is hardcoded to a person.
 VOICE_PRESETS = {
-    "my-voice": os.getenv("ELEVENLABS_VOICE_MY_VOICE", "xd6ta1jjl6XtFRVgqndO"),             # Custom voice clone (default)
-    "arabic-male": os.getenv("ELEVENLABS_VOICE_ARABIC_MALE", "xd6ta1jjl6XtFRVgqndO"),       # Custom voice clone
+    "my-voice": os.getenv("ELEVENLABS_VOICE_MY_VOICE", "JBFqnCBsd6RMkjVDRZzb"),             # George — override with your own clone
+    "arabic-male": os.getenv("ELEVENLABS_VOICE_ARABIC_MALE", "nPczCjzI2devNBz1zQrb"),       # Brian
     "arabic-female": os.getenv("ELEVENLABS_VOICE_ARABIC_FEMALE", "21m00Tcm4TlvDq8ikWAM"),   # Rachel
-    "english-male": os.getenv("ELEVENLABS_VOICE_ENGLISH_MALE", "xd6ta1jjl6XtFRVgqndO"),     # Custom voice clone
+    "english-male": os.getenv("ELEVENLABS_VOICE_ENGLISH_MALE", "nPczCjzI2devNBz1zQrb"),     # Brian
     "english-female": os.getenv("ELEVENLABS_VOICE_ENGLISH_FEMALE", "21m00Tcm4TlvDq8ikWAM"), # Rachel
 }
 
@@ -72,6 +80,32 @@ def _track_cost(cost_key: str, multiplier: float = 1.0):
     global _api_calls, _estimated_cost
     _api_calls += 1
     _estimated_cost += _COST_MAP.get(cost_key, 0) * multiplier
+
+
+def _track_cost_usd(amount: float):
+    """Book a call whose price came from the provider rather than _COST_MAP."""
+    global _api_calls, _estimated_cost
+    _api_calls += 1
+    _estimated_cost += amount
+
+
+def _confirm_spend(amount: float, what: str, assume_yes: bool) -> None:
+    """Gate paid generation behind an explicit yes. Video is 10-50x the cost of an image,
+    so a mistyped duration or a fat shot list should not silently drain a balance."""
+    if assume_yes:
+        return
+    print(f"\nAbout to spend ~${amount:.2f} on {what}.", file=sys.stderr)
+    if not sys.stdin.isatty():
+        print(
+            "Error: refusing to spend without confirmation in a non-interactive session — "
+            "pass --yes if this is what you want.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    answer = input("Proceed? [y/N] ").strip().lower()
+    if answer not in ("y", "yes"):
+        print("Aborted — nothing was submitted.", file=sys.stderr)
+        sys.exit(1)
 
 
 def _print_cost():
@@ -534,25 +568,77 @@ def cmd_overlay(args):
 # ─── VIDEO SUBCOMMAND ───────────────────────────────────────
 
 def cmd_video(args):
+    """Route --model/--provider to a backend. `fast`/`standard` keep the original Gemini
+    path; everything else goes over HTTP via video_providers."""
+    sys.path.insert(0, str(Path(__file__).parent))
+    from video_providers import VideoProviderError, resolve
+
+    try:
+        _, provider = resolve(args.model, args.provider)
+    except VideoProviderError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    if provider == "gemini":
+        _video_via_gemini(args)
+    else:
+        _video_via_http(args, provider)
+
+
+def _video_via_gemini(args):
     from google.genai import types
+
+    if args.reference or args.resolution:
+        print(
+            "Error: --reference/--resolution are not supported on the Gemini backend; "
+            f"pick an HTTP-backed model ({', '.join(HTTP_VIDEO_MODELS)}) for those.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    if args.duration not in VALID_VIDEO_DURATIONS:
+        allowed = ", ".join(str(d) for d in VALID_VIDEO_DURATIONS)
+        print(f"Error: --duration {args.duration} not supported by {args.model} "
+              f"(allowed: {allowed})", file=sys.stderr)
+        sys.exit(2)
+
+    if args.aspect not in ("16:9", "9:16"):
+        print(f"Error: --aspect {args.aspect} not supported by {args.model} "
+              f"(allowed: 16:9, 9:16)", file=sys.stderr)
+        sys.exit(2)
 
     client = _get_google_client()
     model_name = VIDEO_MODELS[args.model]
     output_dir = Path(args.output) if args.output else OUTPUT_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Build request
+    # Build request. duration_seconds must be sent explicitly — without it Veo returns its
+    # own default length while the cost line below still bills for --duration.
     generate_config = {
         "aspect_ratio": args.aspect,
         "number_of_videos": 1,
+        "duration_seconds": args.duration,
     }
+    if not args.audio:
+        generate_config["generate_audio"] = False
 
-    # Image-to-video
+    # Image-to-video. --first-frame is the explicit spelling; --from-image is the original
+    # flag and stays an alias for it.
+    from PIL import Image
+
     image_ref = None
-    if args.from_image:
-        from PIL import Image
-        image_ref = Image.open(args.from_image)
-        print(f"Using reference image: {args.from_image}", file=sys.stderr)
+    first_frame = args.first_frame or args.from_image
+    if first_frame:
+        image_ref = Image.open(first_frame)
+        print(f"Using first frame: {first_frame}", file=sys.stderr)
+
+    if args.last_frame:
+        if not first_frame:
+            print("Error: --last-frame needs --first-frame (or --from-image) as well",
+                  file=sys.stderr)
+            sys.exit(2)
+        generate_config["last_frame"] = Image.open(args.last_frame)
+        print(f"Using last frame: {args.last_frame}", file=sys.stderr)
 
     print(f"Generating video with {model_name} ({args.duration}s)...", file=sys.stderr)
 
@@ -605,9 +691,12 @@ def cmd_video(args):
             "type": "video",
             "prompt": args.prompt,
             "model": model_name,
+            "provider": "gemini",
             "duration": args.duration,
             "aspect_ratio": args.aspect,
-            "from_image": args.from_image,
+            "generate_audio": args.audio,
+            "first_frame": first_frame,
+            "last_frame": args.last_frame,
             "timestamp": datetime.now().isoformat(),
         }
         _save_metadata(filepath, metadata)
@@ -615,6 +704,129 @@ def cmd_video(args):
 
     _print_cost()
     json.dump({"generated": results}, sys.stdout, indent=2)
+    print()
+
+
+def _video_via_http(args, provider_name: str):
+    """OpenRouter / MiniMax: validate locally, gate the spend, submit, poll, download."""
+    sys.path.insert(0, str(Path(__file__).parent))
+    import video_providers as vp
+
+    output_dir = Path(args.output) if args.output else OUTPUT_DIR
+
+    try:
+        spec, provider_name = vp.resolve(args.model, provider_name)
+        caps = spec.caps[provider_name]
+        request = vp.VideoRequest(
+            model=args.model,
+            provider=provider_name,
+            prompt=args.prompt,
+            duration=args.duration,
+            aspect_ratio=args.aspect,
+            resolution=args.resolution or caps.default_resolution,
+            first_frame=args.first_frame or args.from_image,
+            last_frame=args.last_frame,
+            references=args.reference or [],
+            generate_audio=args.audio,
+        )
+        vp.validate(request, caps)
+        estimate = vp.estimate_cost(request, caps)
+    except vp.VideoProviderError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    label = (
+        f"{args.model} via {provider_name} — {request.duration}s at "
+        f"{request.resolution or 'default'}"
+    )
+    _confirm_spend(estimate, label, args.yes)
+
+    try:
+        provider = vp.get_provider(provider_name)
+        print(f"Submitting to {provider_name} ({label})...", file=sys.stderr)
+        job_id = provider.submit(request, spec.backend_ids[provider_name], caps)
+        print(f"  Job: {job_id}", file=sys.stderr)
+
+        state = vp.wait_for(provider, job_id, timeout=args.timeout)
+        video_bytes = provider.download(state["url"])
+    except vp.VideoProviderError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    filepath = _save_file(video_bytes, output_dir, args.prefix, ".mp4")
+    print(f"  Saved: {filepath}", file=sys.stderr)
+
+    # Providers report the real charge late (MiniMax fills `usage` a beat after the task
+    # flips to succeeded), so keep the local estimate when it isn't there yet.
+    billed = state.get("cost")
+    _track_cost_usd(billed if billed is not None else estimate)
+
+    metadata = {
+        "type": "video",
+        "prompt": args.prompt,
+        "model": args.model,
+        "backend_model": spec.backend_ids[provider_name],
+        "provider": provider_name,
+        "job_id": job_id,
+        "duration": request.duration,
+        "resolution": request.resolution,
+        "aspect_ratio": request.aspect_ratio,
+        "generate_audio": request.generate_audio,
+        "first_frame": request.first_frame,
+        "last_frame": request.last_frame,
+        "references": request.references,
+        "estimated_cost": round(estimate, 4),
+        "billed_cost": billed,
+        "timestamp": datetime.now().isoformat(),
+    }
+    _save_metadata(filepath, metadata)
+
+    _print_cost()
+    json.dump({"generated": [{"file": str(filepath), "metadata": metadata}]},
+              sys.stdout, indent=2)
+    print()
+
+
+def cmd_caps(args):
+    """Print the live capability record for a model — checks MODEL_REGISTRY for drift."""
+    sys.path.insert(0, str(Path(__file__).parent))
+    import video_providers as vp
+
+    try:
+        spec, provider_name = vp.resolve(args.model, args.provider)
+    except vp.VideoProviderError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    local = spec.caps[provider_name]
+    payload = {
+        "model": args.model,
+        "provider": provider_name,
+        "backend_id": spec.backend_ids[provider_name],
+        "local": {
+            "durations": list(local.durations),
+            "resolutions": list(local.resolutions),
+            "aspect_ratios": list(local.aspect_ratios),
+            "frame_types": list(local.frame_types),
+            "audio": local.audio,
+            "seed": local.seed,
+            "price_per_second": local.price_per_second,
+        },
+    }
+
+    if provider_name == "openrouter":
+        try:
+            payload["live"] = vp.refresh_openrouter_caps(spec.backend_ids[provider_name])
+        except vp.VideoProviderError as e:
+            payload["live_error"] = str(e)
+    else:
+        payload["live"] = None
+        payload["note"] = (
+            "MiniMax publishes no capability endpoint; the local record mirrors "
+            "platform.minimax.io/docs/guides/video-generation"
+        )
+
+    json.dump(payload, sys.stdout, indent=2)
     print()
 
 
@@ -684,6 +896,412 @@ def cmd_voice(args):
     print()
 
 
+# ─── STORY SUBCOMMAND ───────────────────────────────────────
+
+def _gemini_image(prompt: str, model_key: str, aspect: str, size: str,
+                  references: list) -> bytes:
+    """One image, returned as bytes. A focused twin of cmd_image's generation core —
+    kept separate so the story pipeline can't regress the image command."""
+    from google.genai import types
+
+    if size == "4K" and model_key != "pro":
+        print("Warning: 4K requires the pro model. Switching to pro...", file=sys.stderr)
+        model_key = "pro"
+
+    client = _get_google_client()
+    model_name = IMAGE_MODELS[model_key]
+
+    config_kwargs = {"aspect_ratio": aspect}
+    if model_key == "pro":
+        config_kwargs["image_size"] = size
+
+    contents = prompt
+    if references:
+        from PIL import Image
+        parts = []
+        for reference in references[:14]:
+            try:
+                parts.append(Image.open(reference))
+                print(f"  Loaded reference: {reference}", file=sys.stderr)
+            except Exception as e:
+                print(f"  Failed to load {reference}: {e}", file=sys.stderr)
+        parts.append(prompt)
+        contents = parts
+
+    response = client.models.generate_content(
+        model=model_name,
+        contents=contents,
+        config=types.GenerateContentConfig(
+            response_modalities=["IMAGE"],
+            image_config=types.ImageConfig(**config_kwargs),
+        ),
+    )
+    _track_cost(f"image_{model_key}")
+
+    for part in response.parts:
+        if part.inline_data is not None:
+            data = _extract_image_bytes(part)
+            if data:
+                return data
+    raise RuntimeError("Gemini returned no image for the board prompt")
+
+
+def _load_story(args):
+    """Load + validate a spec, echo warnings, and resolve the working directory."""
+    sys.path.insert(0, str(Path(__file__).parent))
+    import storyboard as sb
+
+    spec_path = Path(args.spec).expanduser().resolve()
+    if not spec_path.is_file():
+        print(f"Error: spec not found: {spec_path}", file=sys.stderr)
+        sys.exit(2)
+
+    try:
+        spec = sb.load_spec(spec_path)
+        warnings = sb.validate_spec(spec)
+    except sb.StorySpecError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    for warning in warnings:
+        print(f"Warning: {warning}", file=sys.stderr)
+
+    workdir = (
+        Path(args.workdir).expanduser().resolve() if args.workdir
+        else spec_path.parent / f"{spec_path.stem}-story"
+    )
+    return sb, spec, spec_path, workdir
+
+
+def _story_video_target(spec, args):
+    """(spec_obj, provider) for the story's model, honouring CLI overrides."""
+    sys.path.insert(0, str(Path(__file__).parent))
+    import video_providers as vp
+
+    model = getattr(args, "model", None) or spec.get("model", "hailuo-3")
+    provider = getattr(args, "provider", None) or spec.get("provider", "auto")
+    try:
+        model_spec, resolved = vp.resolve(model, provider)
+    except vp.VideoProviderError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    if resolved == "gemini":
+        print(
+            f"Error: story runs on the HTTP backends only; {model!r} resolves to the "
+            f"Gemini SDK path. Use one of: {', '.join(HTTP_VIDEO_MODELS)}.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    return model_spec, resolved, model
+
+
+def _story_clip_requests(sb, spec, args, workdir):
+    """Build one VideoRequest per clip, with panel paths attached. Validates every clip
+    before any of them are submitted."""
+    import video_providers as vp
+
+    model_spec, provider, model = _story_video_target(spec, args)
+    caps = model_spec.caps[provider]
+    panels_dir = workdir / "panels"
+
+    plan = sb.clip_plan(spec)
+    if args.only:
+        wanted = set(args.only)
+        plan = [entry for entry in plan if entry["id"] in wanted]
+        missing = wanted - {entry["id"] for entry in plan}
+        if missing:
+            print(
+                f"Error: --only names shot(s) with no clip: {', '.join(sorted(missing))}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
+    built = []
+    for entry in plan:
+        first = panels_dir / f"panel-{entry['first_panel']:02d}.png"
+        last = (
+            panels_dir / f"panel-{entry['last_panel']:02d}.png"
+            if entry["last_panel"] else None
+        )
+        request = vp.VideoRequest(
+            model=model,
+            provider=provider,
+            prompt=sb.compile_shot_prompt(entry, spec),
+            duration=entry["duration"],
+            aspect_ratio=spec.get("aspect"),
+            resolution=spec.get("resolution") or caps.default_resolution,
+            first_frame=str(first),
+            last_frame=str(last) if last else None,
+            generate_audio=caps.audio,
+        )
+        try:
+            vp.validate(request, caps)
+        except vp.VideoProviderError as e:
+            print(f"Error: shot {entry['id']}: {e}", file=sys.stderr)
+            sys.exit(2)
+
+        built.append({
+            "entry": entry,
+            "request": request,
+            "first": first,
+            "last": last,
+            "cost": vp.estimate_cost(request, caps),
+        })
+
+    return built, model_spec, provider, caps
+
+
+def cmd_story_plan(args):
+    """Dry run: every compiled prompt and the full cost, without spending anything."""
+    sb, spec, spec_path, workdir = _load_story(args)
+    cols, rows = sb.grid_for(spec)
+    clips, _, provider, _ = _story_clip_requests(sb, spec, args, workdir)
+
+    board_prompt = sb.compile_board_prompt(spec)
+    board_model = (spec.get("board") or {}).get("image_model", "pro")
+    board_cost = _COST_MAP.get(f"image_{board_model}", 0.0)
+
+    print(f"\n=== BOARD ({cols}x{rows}, {board_model}) ===\n", file=sys.stderr)
+    print(board_prompt, file=sys.stderr)
+
+    for clip in clips:
+        entry = clip["entry"]
+        frames = f"panel-{entry['first_panel']:02d}"
+        if entry["last_panel"]:
+            frames += f" -> panel-{entry['last_panel']:02d}"
+        print(f"\n=== CLIP {entry['id']} ({frames}, {entry['duration']}s, "
+              f"~${clip['cost']:.2f}) ===\n", file=sys.stderr)
+        print(clip["request"].prompt, file=sys.stderr)
+
+    clips_cost = sum(clip["cost"] for clip in clips)
+    print(
+        f"\nTotal: 1 board (~${board_cost:.2f}) + {len(clips)} clips "
+        f"(~${clips_cost:.2f}) = ~${board_cost + clips_cost:.2f} via {provider}\n",
+        file=sys.stderr,
+    )
+
+    json.dump({
+        "spec": str(spec_path),
+        "workdir": str(workdir),
+        "provider": provider,
+        "grid": [cols, rows],
+        "board_prompt": board_prompt,
+        "clips": [
+            {
+                "id": clip["entry"]["id"],
+                "first_panel": clip["entry"]["first_panel"],
+                "last_panel": clip["entry"]["last_panel"],
+                "duration": clip["entry"]["duration"],
+                "estimated_cost": round(clip["cost"], 4),
+                "prompt": clip["request"].prompt,
+            }
+            for clip in clips
+        ],
+        "estimated_cost": round(board_cost + clips_cost, 4),
+    }, sys.stdout, indent=2)
+    print()
+
+
+def cmd_story_board(args):
+    """Phase 1: one image call -> a contact sheet -> sliced panels."""
+    sb, spec, spec_path, workdir = _load_story(args)
+    cols, rows = sb.grid_for(spec)
+    board = spec.get("board") or {}
+    board_model = board.get("image_model", "pro")
+    board_size = board.get("size", "4K")
+    inset = float(board.get("inset", 0.03))
+
+    # Cast references travel with the spec, so resolve them relative to it.
+    references = [
+        str((spec_path.parent / path).resolve() if not Path(path).is_absolute() else path)
+        for path in (spec.get("cast") or {}).values()
+    ]
+
+    prompt = sb.compile_board_prompt(spec)
+    estimate = _COST_MAP.get(f"image_{board_model}", 0.0)
+    _confirm_spend(estimate, f"1 storyboard sheet ({cols}x{rows}, {board_model})", args.yes)
+
+    print(f"Generating {cols}x{rows} contact sheet...", file=sys.stderr)
+    try:
+        sheet_bytes = _gemini_image(
+            prompt, board_model, spec.get("aspect", "16:9"), board_size, references
+        )
+    except Exception as e:
+        print(f"Error generating the board: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    workdir.mkdir(parents=True, exist_ok=True)
+    sheet_path = workdir / "board.png"
+    sheet_path.write_bytes(sheet_bytes)
+    print(f"  Saved: {sheet_path}", file=sys.stderr)
+
+    try:
+        panels = sb.slice_contact_sheet(
+            sheet_path, cols, rows, workdir / "panels",
+            inset=inset, count=len(spec["shots"]),
+            autotrim=board.get("autotrim", True),
+        )
+    except sb.StorySpecError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    for panel in panels:
+        print(f"  Panel: {panel}", file=sys.stderr)
+
+    sb.merge_manifest(workdir, {
+        "spec": str(spec_path),
+        "spec_sha256": sb.sha256_of(spec_path),
+        "board": {
+            "prompt": prompt,
+            "model": IMAGE_MODELS[board_model if board_size != "4K" else "pro"],
+            "grid": [cols, rows],
+            "inset": inset,
+            "sheet": str(sheet_path),
+            "sheet_sha256": sb.sha256_of(sheet_path),
+            "panels": {p.name: sb.sha256_of(p) for p in panels},
+            "timestamp": datetime.now().isoformat(),
+        },
+    })
+
+    _print_cost()
+    json.dump({
+        "board": str(sheet_path),
+        "panels": [str(p) for p in panels],
+        "workdir": str(workdir),
+    }, sys.stdout, indent=2)
+    print()
+
+
+def cmd_story_shots(args):
+    """Phase 2: chain the panels through the video model, one clip per pair."""
+    import video_providers as vp
+
+    sb, spec, spec_path, workdir = _load_story(args)
+    clips, model_spec, provider_name, _ = _story_clip_requests(sb, spec, args, workdir)
+
+    missing = [str(c["first"]) for c in clips if not c["first"].is_file()]
+    missing += [str(c["last"]) for c in clips if c["last"] and not c["last"].is_file()]
+    if missing:
+        print(
+            "Error: missing panel(s): " + ", ".join(sorted(set(missing)))
+            + "\n  Run `story board` first (or re-run it if you changed the shot list).",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    total = sum(clip["cost"] for clip in clips)
+    _confirm_spend(
+        total,
+        f"{len(clips)} clip(s) on {spec.get('model', 'hailuo-3')} via {provider_name}",
+        args.yes,
+    )
+
+    clips_dir = workdir / "clips"
+    clips_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        provider = vp.get_provider(provider_name)
+    except vp.VideoProviderError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    generated, failures = [], []
+    for position, clip in enumerate(clips, 1):
+        entry = clip["entry"]
+        print(f"\n[{position}/{len(clips)}] {entry['id']} "
+              f"({entry['duration']}s, ~${clip['cost']:.2f})", file=sys.stderr)
+
+        try:
+            job_id = provider.submit(
+                clip["request"], model_spec.backend_ids[provider_name],
+                model_spec.caps[provider_name],
+            )
+            print(f"  Job: {job_id}", file=sys.stderr)
+            state = vp.wait_for(provider, job_id, timeout=args.timeout)
+            video_bytes = provider.download(state["url"])
+        except vp.VideoProviderError as e:
+            # Keep going: one refused shot shouldn't discard the clips already paid for.
+            print(f"  Failed: {e}", file=sys.stderr)
+            failures.append({"id": entry["id"], "error": str(e)})
+            continue
+
+        clip_path = clips_dir / f"{position:02d}-{entry['id']}.mp4"
+        clip_path.write_bytes(video_bytes)
+        print(f"  Saved: {clip_path}", file=sys.stderr)
+
+        billed = state.get("cost")
+        _track_cost_usd(billed if billed is not None else clip["cost"])
+
+        record = {
+            "id": entry["id"],
+            "file": str(clip_path),
+            "sha256": sb.sha256_of(clip_path),
+            "job_id": job_id,
+            "provider": provider_name,
+            "model": model_spec.backend_ids[provider_name],
+            "duration": entry["duration"],
+            "resolution": clip["request"].resolution,
+            "first_frame": clip["first"].name,
+            "last_frame": clip["last"].name if clip["last"] else None,
+            "prompt": clip["request"].prompt,
+            "estimated_cost": round(clip["cost"], 4),
+            "billed_cost": billed,
+            "timestamp": datetime.now().isoformat(),
+        }
+        generated.append(record)
+        # Written per clip, not at the end — a crash on clip 6 must not lose clips 1-5.
+        sb.merge_manifest(workdir, {"clips": {entry["id"]: record}})
+
+    _print_cost()
+    if failures:
+        print(f"\n{len(failures)} shot(s) failed; re-run just those with "
+              f"--only {' '.join(f['id'] for f in failures)}", file=sys.stderr)
+
+    json.dump({"clips": generated, "failed": failures}, sys.stdout, indent=2)
+    print()
+    if failures and not generated:
+        sys.exit(1)
+
+
+def cmd_story_assemble(args):
+    """Phase 3: concatenate the clips in shot order."""
+    sb, spec, spec_path, workdir = _load_story(args)
+    plan = sb.clip_plan(spec)
+
+    clips_dir = workdir / "clips"
+    ordered = [
+        clips_dir / f"{position:02d}-{entry['id']}.mp4"
+        for position, entry in enumerate(plan, 1)
+    ]
+
+    output = (
+        Path(args.output).expanduser().resolve() if args.output
+        else workdir / f"{spec.get('title') or spec_path.stem}.mp4"
+    )
+
+    try:
+        sb.assemble(ordered, output)
+    except sb.StorySpecError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"  Saved: {output}", file=sys.stderr)
+    sb.merge_manifest(workdir, {
+        "assembled": {
+            "file": str(output),
+            "sha256": sb.sha256_of(output),
+            "clips": [c.name for c in ordered],
+            "timestamp": datetime.now().isoformat(),
+        }
+    })
+
+    json.dump({"video": str(output), "clips": [str(c) for c in ordered]},
+              sys.stdout, indent=2)
+    print()
+
+
 # ─── CLI ─────────────────────────────────────────────────────
 
 def main():
@@ -708,15 +1326,78 @@ def main():
     img.set_defaults(func=cmd_image)
 
     # ── video ──
-    vid = sub.add_parser("video", help="Generate video clips via Veo 3.1")
+    vid = sub.add_parser("video", help="Generate video clips (Veo, Hailuo)")
     vid.add_argument("prompt", help="Video generation prompt")
-    vid.add_argument("--model", choices=["standard", "fast"], default="fast")
-    vid.add_argument("--duration", type=int, choices=VALID_VIDEO_DURATIONS, default=4)
-    vid.add_argument("--aspect", choices=["16:9", "9:16"], default="16:9")
-    vid.add_argument("--from-image", help="Image path for image-to-video")
+    vid.add_argument("--model", choices=ALL_VIDEO_MODELS, default="fast",
+                     help="fast/standard = Veo via Gemini; hailuo-* = HTTP backends")
+    vid.add_argument("--provider", choices=VIDEO_PROVIDERS, default="auto",
+                     help="Backend for --model; 'auto' picks the model's default")
+    vid.add_argument("--duration", type=int, default=4,
+                     help="Seconds; validated against the model's supported set")
+    vid.add_argument("--aspect", default="16:9")
+    vid.add_argument("--resolution", help="e.g. 2K, 768P (HTTP backends only)")
+    vid.add_argument("--from-image", help="Image path for image-to-video (first frame)")
+    vid.add_argument("--first-frame", help="Opening frame image — path or https URL")
+    vid.add_argument("--last-frame", help="Closing frame image — path or https URL")
+    vid.add_argument("--reference", nargs="+",
+                     help="Style/identity reference images (cannot combine with frames)")
+    vid.add_argument("--no-audio", dest="audio", action="store_false",
+                     help="Skip the native audio track")
+    vid.add_argument("--timeout", type=int, default=900,
+                     help="Seconds to wait for an async job (default 900)")
+    vid.add_argument("--yes", "-y", action="store_true",
+                     help="Skip the spend confirmation")
     vid.add_argument("--output", help="Output directory")
     vid.add_argument("--prefix", default="generated")
-    vid.set_defaults(func=cmd_video)
+    vid.set_defaults(func=cmd_video, audio=True)
+
+    # ── caps ──
+    caps = sub.add_parser("caps", help="Show a video model's capabilities (local + live)")
+    caps.add_argument("--model", choices=ALL_VIDEO_MODELS, default="hailuo-3")
+    caps.add_argument("--provider", choices=VIDEO_PROVIDERS, default="auto")
+    caps.set_defaults(func=cmd_caps)
+
+    # ── story ──
+    story = sub.add_parser(
+        "story", help="Storyboard-driven multi-shot video from a story spec"
+    )
+    story_sub = story.add_subparsers(dest="phase", required=True)
+
+    def _story_common(parser_obj, *, video_flags=True):
+        parser_obj.add_argument("spec", help="Path to the story JSON spec")
+        parser_obj.add_argument("--workdir", help="Where panels/clips live "
+                                                  "(default: <spec>-story/)")
+        if video_flags:
+            parser_obj.add_argument("--model", choices=HTTP_VIDEO_MODELS,
+                                    help="Override the spec's model")
+            parser_obj.add_argument("--provider", choices=VIDEO_PROVIDERS,
+                                    help="Override the spec's provider")
+            parser_obj.add_argument("--only", nargs="+", metavar="SHOT_ID",
+                                    help="Limit to these shot ids (re-roll a failure)")
+        return parser_obj
+
+    plan_p = _story_common(story_sub.add_parser(
+        "plan", help="Dry run: print every compiled prompt and the total cost"))
+    plan_p.set_defaults(func=cmd_story_plan)
+
+    board_p = _story_common(story_sub.add_parser(
+        "board", help="Phase 1: generate the contact sheet and slice it into panels"),
+        video_flags=False)
+    board_p.add_argument("--yes", "-y", action="store_true",
+                         help="Skip the spend confirmation")
+    board_p.set_defaults(func=cmd_story_board)
+
+    shots_p = _story_common(story_sub.add_parser(
+        "shots", help="Phase 2: chain the panels into clips"))
+    shots_p.add_argument("--timeout", type=int, default=900)
+    shots_p.add_argument("--yes", "-y", action="store_true",
+                         help="Skip the spend confirmation")
+    shots_p.set_defaults(func=cmd_story_shots)
+
+    assemble_p = _story_common(story_sub.add_parser(
+        "assemble", help="Phase 3: concatenate the clips with ffmpeg"), video_flags=False)
+    assemble_p.add_argument("--output", help="Output mp4 path")
+    assemble_p.set_defaults(func=cmd_story_assemble)
 
     # ── voice ──
     vox = sub.add_parser("voice", help="Generate voiceovers via ElevenLabs")

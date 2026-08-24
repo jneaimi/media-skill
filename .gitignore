@@ -3,3 +3,6 @@ __pycache__/
 .DS_Store
 .venv/
 *.egg-info/
+
+# story working directories — generated boards, panels, clips and manifests
+examples/*-story/
