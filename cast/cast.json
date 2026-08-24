@@ -1,0 +1,70 @@
+{
+  "_comment": "The named cast. All models are Quaternius CC0 packs fetched by fetch_assets.sh; blend paths are relative to this directory and absolutized by compose.py. Recolors use render_scene.py's in-place tree-rebuild (slot copies silently no-op on these library materials). Shirt color IS character identity across panels \u2014 keep them stable. Faces are basic by design: emotion comes from pose, camera, and bubble shape.",
+  "characters": {
+    "omar": {
+      "bio": "Lead trainer. Patient, asks before telling. The suit.",
+      "blend": "assets/animatedmen/Blends/Male_Suit.blend",
+      "action_prefix": "Man"
+    },
+    "sara": {
+      "bio": "Sharp engineer, usually right, occasionally overconfident \u2014 the protagonist of most dilemmas. Teal shirt.",
+      "blend": "assets/animatedwomen/Blend/Female_Casual.blend",
+      "action_prefix": "Female",
+      "recolor": [
+        {
+          "slot_prefix": "Shirt",
+          "rgb": [
+            0.07,
+            0.28,
+            0.34
+          ]
+        }
+      ]
+    },
+    "khalid": {
+      "bio": "Junior admin, enthusiastic, clicks before reading \u2014 the cautionary tale. Amber shirt.",
+      "blend": "assets/animatedmen/Blends/Male_Casual.blend",
+      "action_prefix": "Man",
+      "recolor": [
+        {
+          "slot_prefix": "Shirt",
+          "rgb": [
+            0.8,
+            0.52,
+            0.13
+          ]
+        }
+      ]
+    },
+    "noor": {
+      "bio": "Ops lead. Calm under incident, speaks last, usually the voice of the correct answer. Indigo dress.",
+      "blend": "assets/animatedwomen/Blend/Female_Dress.blend",
+      "action_prefix": "Female",
+      "recolor": [
+        {
+          "slot_prefix": "Dress",
+          "rgb": [
+            0.2,
+            0.22,
+            0.4
+          ]
+        }
+      ]
+    },
+    "hamdan": {
+      "bio": "Security engineer, skeptical of everything \u2014 the one who asks 'but who approved this?'. Slate shirt.",
+      "blend": "assets/animatedmen/Blends/Male_LongSleeve.blend",
+      "action_prefix": "Man",
+      "recolor": [
+        {
+          "slot_prefix": "Shirt",
+          "rgb": [
+            0.14,
+            0.18,
+            0.24
+          ]
+        }
+      ]
+    }
+  }
+}

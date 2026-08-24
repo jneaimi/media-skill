@@ -1,0 +1,61 @@
+{
+  "_comment": "Pose vocabulary harvested by scrubbing every pack action at 6 frames per action (cast/grid-man.png, grid-woman.png in the task evidence). The men and women packs carry the SAME retargeted motions frame-for-frame, so one vocabulary serves both: compose.py prefixes the character's action_prefix (Man/Female). 'frame' is the hold frame frozen via NLA. seated carries floor_snap:false because the sitting action stores hip height in the pose itself.",
+  "poses": {
+    "presenting": {
+      "action": "Clapping",
+      "frame": 5,
+      "reads_as": "one hand raised \u2014 making a point, appeal, conversational challenge; the safe person-directed gesture"
+    },
+    "gesturing": {
+      "action": "Clapping",
+      "frame": 24,
+      "reads_as": "both hands up, engaging the room"
+    },
+    "idle": {
+      "action": "Idle",
+      "frame": 40,
+      "reads_as": "relaxed neutral stand"
+    },
+    "standing": {
+      "action": "Standing",
+      "frame": 12,
+      "reads_as": "upright, attentive"
+    },
+    "seated": {
+      "action": "Sitting",
+      "frame": 11,
+      "reads_as": "seated at a desk/chair \u2014 REQUIRES the seat-contact probe (cinematography.md \u00a75-6): place ~3-5cm behind chair center, z=0.02, verify hips on seat",
+      "floor_snap": false
+    },
+    "hand-raised": {
+      "action": "Jump",
+      "frame": 15,
+      "reads_as": "arm stretched overhead \u2014 asking a question"
+    },
+    "pointing": {
+      "action": "Punch",
+      "frame": 13,
+      "reads_as": "arm extended forward at a THING \u2014 profile angles only, never aimed at a person (reads as a punch from 3/4-rear; see cinematography.md \u00a74)"
+    },
+    "walking": {
+      "action": "Walk",
+      "frame": 10,
+      "reads_as": "mid-stride"
+    },
+    "running": {
+      "action": "Run",
+      "frame": 18,
+      "reads_as": "urgency \u2014 incident response"
+    },
+    "cheering": {
+      "action": "RunningJump",
+      "frame": 18,
+      "reads_as": "airborne, arms up \u2014 celebration"
+    },
+    "collapsed": {
+      "action": "Death",
+      "frame": 45,
+      "reads_as": "lying flat \u2014 'the server is down' visual metaphor; use tastefully, never for people harm"
+    }
+  }
+}

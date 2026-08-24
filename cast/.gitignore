@@ -1,0 +1,5 @@
+assets
+assets/
+shots/
+.fetch-venv/
+*.shot.json

@@ -1,0 +1,377 @@
+{
+  "version": 1,
+  "units": {
+    "character_height": 1.75
+  },
+  "world": {
+    "color": [
+      0.85,
+      0.87,
+      0.9
+    ],
+    "strength": 0.55
+  },
+  "materials": {
+    "wall": {
+      "rgb": [
+        0.88,
+        0.86,
+        0.82
+      ],
+      "rough": 0.8
+    },
+    "floor": {
+      "rgb": [
+        0.48,
+        0.36,
+        0.26
+      ],
+      "rough": 0.8
+    },
+    "frame": {
+      "rgb": [
+        0.2,
+        0.22,
+        0.25
+      ],
+      "rough": 0.8
+    },
+    "board": {
+      "rgb": [
+        0.97,
+        0.97,
+        0.95
+      ],
+      "rough": 0.4
+    },
+    "note0": {
+      "rgb": [
+        0.95,
+        0.75,
+        0.25
+      ],
+      "rough": 0.8
+    },
+    "note1": {
+      "rgb": [
+        0.45,
+        0.7,
+        0.55
+      ],
+      "rough": 0.8
+    },
+    "note2": {
+      "rgb": [
+        0.85,
+        0.45,
+        0.4
+      ],
+      "rough": 0.8
+    },
+    "laptop": {
+      "rgb": [
+        0.3,
+        0.32,
+        0.35
+      ],
+      "rough": 0.35
+    },
+    "screen": {
+      "rgb": [
+        0.7,
+        0.88,
+        0.97
+      ],
+      "rough": 0.2
+    }
+  },
+  "boxes": [
+    {
+      "name": "floor",
+      "size": [
+        14,
+        14,
+        0.1
+      ],
+      "loc": [
+        0,
+        0,
+        -0.05
+      ],
+      "material": "floor"
+    },
+    {
+      "name": "wall_back",
+      "size": [
+        14,
+        0.2,
+        4
+      ],
+      "loc": [
+        0,
+        3.2,
+        2.0
+      ],
+      "material": "wall"
+    },
+    {
+      "name": "wall_side",
+      "size": [
+        0.2,
+        14,
+        4
+      ],
+      "loc": [
+        -5.0,
+        0,
+        2.0
+      ],
+      "material": "wall"
+    },
+    {
+      "name": "board_frame",
+      "size": [
+        1.5,
+        0.04,
+        0.85
+      ],
+      "loc": [
+        0.4,
+        3.06,
+        1.7
+      ],
+      "material": "frame"
+    },
+    {
+      "name": "board",
+      "size": [
+        1.4,
+        0.04,
+        0.75
+      ],
+      "loc": [
+        0.4,
+        3.0,
+        1.7
+      ],
+      "material": "board"
+    },
+    {
+      "name": "note0",
+      "size": [
+        0.18,
+        0.03,
+        0.13
+      ],
+      "loc": [
+        -0.25,
+        2.93,
+        1.98
+      ],
+      "material": "note0"
+    },
+    {
+      "name": "note1",
+      "size": [
+        0.18,
+        0.03,
+        0.13
+      ],
+      "loc": [
+        0.4,
+        2.93,
+        1.58
+      ],
+      "material": "note1"
+    },
+    {
+      "name": "note2",
+      "size": [
+        0.18,
+        0.03,
+        0.13
+      ],
+      "loc": [
+        1.05,
+        2.93,
+        1.98
+      ],
+      "material": "note2"
+    },
+    {
+      "name": "lap_base",
+      "size": [
+        0.36,
+        0.24,
+        0.02
+      ],
+      "loc": [
+        1.1,
+        -0.52,
+        0.75
+      ],
+      "material": "laptop"
+    },
+    {
+      "name": "lap_screen",
+      "size": [
+        0.36,
+        0.02,
+        0.24
+      ],
+      "loc": [
+        1.1,
+        -0.4,
+        0.86
+      ],
+      "rot_deg": [
+        -14,
+        0,
+        0
+      ],
+      "material": "laptop"
+    },
+    {
+      "name": "lap_glow",
+      "size": [
+        0.32,
+        0.015,
+        0.2
+      ],
+      "loc": [
+        1.1,
+        -0.408,
+        0.86
+      ],
+      "rot_deg": [
+        -14,
+        0,
+        0
+      ],
+      "material": "screen"
+    }
+  ],
+  "props": [
+    {
+      "blend": "assets/furniture/Blends/Chair.blend",
+      "height": 0.95,
+      "loc": [
+        1.1,
+        -1.35,
+        0
+      ],
+      "rot_z_deg": 180
+    },
+    {
+      "blend": "assets/furniture/Blends/Table.blend",
+      "height": 0.74,
+      "loc": [
+        1.1,
+        -0.45,
+        0
+      ]
+    },
+    {
+      "blend": "assets/furniture/Blends/BookCaseLargeBooks.blend",
+      "height": 2.0,
+      "loc": [
+        -4.7,
+        0.6,
+        0
+      ],
+      "rot_z_deg": 90
+    },
+    {
+      "blend": "assets/furniture/Blends/Plant.blend",
+      "height": 1.1,
+      "loc": [
+        3.6,
+        2.7,
+        0
+      ]
+    }
+  ],
+  "cast": [],
+  "lights": {
+    "sun": {
+      "energy": 3.2,
+      "angle_deg": 20,
+      "rot_deg": [
+        48,
+        -18,
+        30
+      ]
+    },
+    "fill": {
+      "energy": 250,
+      "size": 7,
+      "loc": [
+        -3,
+        -4,
+        3.5
+      ],
+      "rot_deg": [
+        55,
+        0,
+        -30
+      ]
+    }
+  },
+  "cameras": [
+    {
+      "name": "wide",
+      "loc": [
+        -3.6,
+        -3.6,
+        1.8
+      ],
+      "target": [
+        1.15,
+        0.42,
+        1.05
+      ],
+      "lens": 30
+    },
+    {
+      "name": "ots",
+      "loc": [
+        0.57,
+        -2.81,
+        2.01
+      ],
+      "target": [
+        1.05,
+        2.55,
+        1.15
+      ],
+      "lens": 30
+    },
+    {
+      "name": "close",
+      "loc": [
+        0.77,
+        -0.11,
+        1.36
+      ],
+      "target": [
+        1.1,
+        -1.42,
+        1.13
+      ],
+      "lens": 50
+    }
+  ],
+  "render": {
+    "resolution": [
+      1600,
+      900
+    ],
+    "samples": {
+      "draft": 24,
+      "final": 128
+    },
+    "draft_scale": 0.5,
+    "outdir": "shots",
+    "prefix": "classroom"
+  }
+}
