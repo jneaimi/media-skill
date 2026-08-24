@@ -6,3 +6,6 @@ __pycache__/
 
 # story working directories — generated boards, panels, clips and manifests
 examples/*-story/
+
+# Finder-compressed working folders
+*.zip
