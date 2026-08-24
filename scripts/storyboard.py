@@ -204,6 +204,13 @@ def grid_for(spec: dict) -> tuple[int, int]:
     return cols, -(-count // cols)
 
 
+def clip_filename(entry: dict) -> str:
+    """Name a clip from its position in the FULL plan, never from its position in a
+    filtered run. `--only turn` must still write 02-turn.mp4, or assemble — which builds
+    its expected names from the whole plan — looks for a file that isn't there."""
+    return f"{entry['index'] + 1:02d}-{entry['id']}.mp4"
+
+
 def clip_plan(spec: dict) -> list[dict]:
     """Expand the spec into the concrete clips to generate.
 

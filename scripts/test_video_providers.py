@@ -494,6 +494,17 @@ class TestGridAndPlan(unittest.TestCase):
         self.assertEqual(len(plan), 4)
         self.assertIsNone(plan[0]["last_panel"])
 
+    def test_clip_filename_uses_the_full_plan_index(self):
+        spec = a_spec(shots=[{"id": f"s{i}", "panel": "p", "action": "a"}
+                             for i in range(4)])
+        plan = sb.clip_plan(spec)
+        self.assertEqual([sb.clip_filename(e) for e in plan],
+                         ["01-s0.mp4", "02-s1.mp4", "03-s2.mp4"])
+        # A filtered re-roll must keep each clip's original number, or assemble —
+        # which builds its expected names from the whole plan — looks for the wrong file.
+        only_third = [e for e in plan if e["id"] == "s2"]
+        self.assertEqual(sb.clip_filename(only_third[0]), "03-s2.mp4")
+
     def test_per_shot_duration_overrides_spec_default(self):
         spec = a_spec()
         spec["shots"][0]["duration"] = 10

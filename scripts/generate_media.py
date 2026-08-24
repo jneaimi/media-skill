@@ -1227,7 +1227,7 @@ def cmd_story_shots(args):
             failures.append({"id": entry["id"], "error": str(e)})
             continue
 
-        clip_path = clips_dir / f"{position:02d}-{entry['id']}.mp4"
+        clip_path = clips_dir / sb.clip_filename(entry)
         clip_path.write_bytes(video_bytes)
         print(f"  Saved: {clip_path}", file=sys.stderr)
 
@@ -1271,10 +1271,7 @@ def cmd_story_assemble(args):
     plan = sb.clip_plan(spec)
 
     clips_dir = workdir / "clips"
-    ordered = [
-        clips_dir / f"{position:02d}-{entry['id']}.mp4"
-        for position, entry in enumerate(plan, 1)
-    ]
+    ordered = [clips_dir / sb.clip_filename(entry) for entry in plan]
 
     output = (
         Path(args.output).expanduser().resolve() if args.output
