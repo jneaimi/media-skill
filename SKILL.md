@@ -273,7 +273,7 @@ Everything here is a `$0.04` image call or free, and all of it becomes spec fiel
 | # | Fires | Put on screen first | Ask | Modes |
 |---|---|---|---|---|
 | A1 Brief | first | — | what is this selling · to whom · format · platform · language | Direction, Guided |
-| A2 Mood | after `image --count 3` on the brief | the three plates | **pick one / re-roll / blend two** | Direction, Guided |
+| A2 Mood | after three *separate* `image` calls | the three plates | **pick one / re-roll / blend two** | Direction, Guided |
 | A3 Cast | per character | `cast/refs/*.jpg` contact sheet | **reuse an existing character / create a new one** | Direction, Guided |
 | A3b New face | if A3 said create | `image --count 3 --reference <mood plate>` | pick the sheet / re-roll / adjust the brief | Direction, Guided |
 | A4 Product | ad mode, if there is a product | the supplied `product.refs` | these are the packaging shots / send better ones | Direction, Guided |
@@ -282,6 +282,18 @@ Everything here is a `$0.04` image call or free, and all of it becomes spec fiel
 **A2 is where the film is decided.** Three plates at `flash` cost $0.12 total and set the
 palette, lighting and rendering that every panel inherits through the `style` field. Getting
 this wrong is not expensive to fix here and is ruinous to fix after the board.
+
+**Write three different prompts, not `--count 3`.** Three rolls of one prompt vary the
+composition and leave the direction unchosen, which is the one thing this gate exists to
+decide. Three genuinely distinct worlds — a painted storybook, a flat vector, a photographic
+interior — cost exactly the same and give the answer. `--count` is for picking a frame once
+the world is settled, not for picking the world.
+
+**Put the film's riskiest element on the mood plate.** If the story turns on rendered text, a
+product label, a reflection or a crowd, draw it here at $0.04 rather than discovering at the
+board that the model cannot. A film whose subject *is* text also needs `allow_text: true` in
+the spec — without it both the board and every clip carry a guard forbidding the thing the
+film is about.
 
 **A3 defaults to reuse, and reuse is free.** `cast/README.md` holds the bible — Omar, Sara,
 Khalid, Noor, Hamdan — each with a reference image in `cast/refs/` and a pinned voice in
@@ -319,6 +331,30 @@ exist — the honest option is re-rolling the sheet, which is cheap enough not t
 **If B3 fails on direction rather than execution, go back to Act A.** A board that is
 well-drawn but the wrong world is an A2 problem, and re-rolling the sheet will keep
 producing the same wrong world at $0.12 a time.
+
+**B3 is also where `action` and `camera` get their only honest review, so re-read them
+against the panels that actually came back.** Both are written before the board exists, which
+means they were written blind: a "slow push in" was authored without knowing the board would
+return a wide and a tight close-up, and a "locked static shot" cannot travel between two
+panels at different scales. A bridge clip must connect the two frames it was handed, so any
+camera note that fights them is a note the model will either ignore or obey into a jump cut.
+Check too that each `action` can actually reach its ending panel — a shot whose action is
+"turns to face the class" cannot arrive at an ending frame where the board is now covered in
+writing. These are prompt-text fixes that cost nothing and need no new board; making them is
+usually the right answer at this gate, not re-rolling the sheet.
+
+**Fix a camera with `CAMERA_VOCABULARY`, not with prose.** `storyboard.py` knows seventeen
+moves — `slow push in`, `fast push in`, `controlled zoom in`, `controlled zoom out`,
+`low`/`high tracking shot`, `slow`/`fast pan left`/`right`, `truck left`/`right`,
+`slow arc shot`, `crane up`/`down`, `locked static shot`, `handheld follow` — and warns on
+anything else, because an off-vocabulary move is one the model may ignore or misread. A wide
+that has to become a close-up is `controlled zoom in`; the reverse is `controlled zoom out`.
+Describing the move in a sentence reads better to a human and worse to the model.
+
+**Re-run `plan` after any B3 fix and read the whole thing, not just the cost line.** The
+warnings are the point: off-vocabulary cameras, grid cells that will be drawn and discarded,
+a sheet aspect that will letterbox every panel. Grepping for `^Total:` skips exactly the
+output the gate was supposed to surface.
 
 **B4 and B6 are one decision split across the shoot.** Keepers cost the same at either tier;
 only rejects differ, and on a chain there will be rejects. So B4 should default to 768P
