@@ -147,6 +147,66 @@ class TestSafeZones(unittest.TestCase):
         with self.assertRaises(adspec.AdSpecError): adspec.safe_zone("tiktok", 0, 1)
 
 
+try:
+    from PIL import Image
+    HAVE_PIL = True
+except ImportError:
+    HAVE_PIL = False
+
+
+@unittest.skipUnless(HAVE_PIL, "Pillow not installed")
+class TestFitAspect(unittest.TestCase):
+    """Every panel must leave the slicer at one exact shape.
+
+    Autotrim removes whatever border the model drew and it draws a different one per
+    cell, so panels come out at slightly different aspects. That is not cosmetic: the
+    video model takes its output geometry from the first frame, so panels at 0.556 and
+    0.634 came back as 768x1376 and 768x1216 clips from a single 768P run — the ad's
+    framing jumped between shots and concat had to re-encode instead of stream-copying.
+    """
+
+    SIZES = ((959, 1724), (963, 1518), (849, 1518), (1920, 1080), (1000, 1000),
+             (2048, 2048), (101, 997))
+
+    def test_always_a_crop_within_one_pixel_of_the_target(self):
+        checked = 0
+        for width, height in self.SIZES:
+            for aspect in storyboard.SUPPORTED_ASPECTS:
+                out = storyboard.fit_aspect(Image.new("RGB", (width, height)), aspect)
+                tw, th = (float(n) for n in aspect.split(":"))
+                target = tw / th
+                ow, oh = out.size
+                where = f"({width}x{height}) -> {aspect} gave {out.size}"
+                # Never scales up: a panel is only ever trimmed.
+                self.assertLessEqual(ow, width, where)
+                self.assertLessEqual(oh, height, where)
+                # Integer sizes cannot always hit the ratio exactly; one pixel is the bound.
+                self.assertLessEqual(min(abs(oh - ow / target), abs(ow - oh * target)),
+                                     1.0, where)
+                checked += 1
+        self.assertEqual(checked, len(self.SIZES) * len(storyboard.SUPPORTED_ASPECTS))
+
+    def test_exact_input_is_returned_untouched(self):
+        image = Image.new("RGB", (1080, 1920))
+        self.assertIs(storyboard.fit_aspect(image, "9:16"), image)
+
+    def test_too_wide_trims_the_sides_and_keeps_full_height(self):
+        out = storyboard.fit_aspect(Image.new("RGB", (963, 1518)), "9:16")
+        self.assertEqual(out.size[1], 1518)
+        self.assertLess(out.size[0], 963)
+
+    def test_too_tall_trims_top_and_bottom_and_keeps_full_width(self):
+        out = storyboard.fit_aspect(Image.new("RGB", (959, 1724)), "9:16")
+        self.assertEqual(out.size[0], 959)
+        self.assertLess(out.size[1], 1724)
+
+    def test_the_regression_pair_ends_up_the_same_shape(self):
+        """0.556 and 0.634 were the two panels that produced mismatched clips."""
+        a = storyboard.fit_aspect(Image.new("RGB", (959, 1724)), "9:16")
+        b = storyboard.fit_aspect(Image.new("RGB", (963, 1518)), "9:16")
+        self.assertAlmostEqual(a.size[0] / a.size[1], b.size[0] / b.size[1], places=3)
+
+
 class TestRetimeCues(unittest.TestCase):
     """Cues are planned against requested durations; clips come back longer.
 

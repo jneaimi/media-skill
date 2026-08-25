@@ -447,16 +447,46 @@ def autotrim_borders(image, max_fraction: float = 0.12, uniformity: float = 6.0)
     return image.crop((left, top, right, bottom))
 
 
+def fit_aspect(image, aspect: str):
+    """Centre-crop an image to an exact w:h, so every panel is the same shape.
+
+    Autotrim removes whatever border the model drew, and it draws a different one in each
+    cell — so the panels come out at slightly different aspects. That does not stay a
+    cosmetic problem: the video model derives its output geometry from the first frame,
+    so panels at 0.556 and 0.634 came back as 768x1376 and 768x1216 clips from one 768P
+    run. The ad's framing then jumps between shots, and concat has to re-encode instead
+    of stream-copying.
+
+    Cropped, never padded. Padding puts black bars inside the frame and the video model
+    animates them as part of the picture.
+    """
+    target_w, target_h = (float(n) for n in aspect.split(":"))
+    target = target_w / target_h
+    width, height = image.size
+    if abs((width / height) - target) < 1e-6:
+        return image
+
+    if (width / height) > target:          # too wide — take height, trim the sides
+        new_w = round(height * target)
+        left = (width - new_w) // 2
+        return image.crop((left, 0, left + new_w, height))
+
+    new_h = round(width / target)          # too tall — take width, trim top and bottom
+    top = (height - new_h) // 2
+    return image.crop((0, top, width, top + new_h))
+
+
 def slice_contact_sheet(sheet: Path, cols: int, rows: int, out_dir: Path,
                         inset: float = 0.03, count: int | None = None,
-                        autotrim: bool = True) -> list[Path]:
+                        autotrim: bool = True, aspect: str | None = None) -> list[Path]:
     """Cut an evenly-gridded contact sheet into panel-NN.png files.
 
-    Two stages, because two different things go wrong. `inset` trims a fixed fraction off
-    each cell to absorb the model never landing the gutter on the exact pixel it was asked
-    for — that's what stops a neighbour's edge bleeding in. `autotrim` then removes any
-    frame the model drew inside the cell, which is variable and can't be handled by a fixed
-    fraction.
+    Three stages, because three different things go wrong. `inset` trims a fixed fraction
+    off each cell to absorb the model never landing the gutter on the exact pixel it was
+    asked for — that's what stops a neighbour's edge bleeding in. `autotrim` then removes
+    any frame the model drew inside the cell, which is variable and can't be handled by a
+    fixed fraction. `aspect` finally squares every panel to one shape, because autotrim
+    leaves them each a slightly different one and the video model inherits that.
     """
     from PIL import Image
 
@@ -483,6 +513,8 @@ def slice_contact_sheet(sheet: Path, cols: int, rows: int, out_dir: Path,
         panel = image.crop(box)
         if autotrim:
             panel = autotrim_borders(panel)
+        if aspect:
+            panel = fit_aspect(panel, aspect)
 
         panel_path = out_dir / f"panel-{position + 1:02d}.png"
         panel.save(panel_path)

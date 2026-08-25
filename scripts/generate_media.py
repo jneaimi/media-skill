@@ -1157,6 +1157,10 @@ def cmd_story_board(args):
             sheet_path, cols, rows, workdir / "panels",
             inset=inset, count=len(spec["shots"]),
             autotrim=board.get("autotrim", True),
+            # Every panel to one exact shape. The video model takes its output geometry
+            # from the first frame, so panels that differ by a few percent come back as
+            # clips of different sizes from a single run.
+            aspect=spec.get("aspect", "16:9"),
         )
     except sb.StorySpecError as e:
         print(f"Error: {e}", file=sys.stderr)
