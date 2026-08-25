@@ -125,6 +125,13 @@ list of shots each carrying what to draw, what happens, one camera move and its 
 }
 ```
 
+Text is suppressed by default. Both the board prompt and every clip prompt carry a guard
+against rendering letters, captions and watermarks, because a model asked for a "cinematic
+still" will otherwise sign it. **If the film is *about* text** — a chalkboard, a sign, a
+scoreboard — set `"allow_text": true` on the spec, or on the single shot that needs it. Without
+it the board is forbidden from drawing the one thing the film exists to show, and nothing
+errors: you simply get a blank board.
+
 [`examples/story-spec.json`](examples/story-spec.json) is a complete working spec — the film
 above came from it. [`references/hailuo-prompting.md`](references/hailuo-prompting.md)
 documents the prompt discipline the compiler encodes.
