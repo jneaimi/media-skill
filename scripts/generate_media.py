@@ -1079,6 +1079,31 @@ def cmd_story_plan(args):
     print()
 
 
+def _suggest_grid(sb, spec) -> str:
+    """The grid whose cells come closest to the clip's real shape.
+
+    Searches cols and rows independently rather than deriving one from the other,
+    because the best answer is often SQUARE — a square grid preserves the cell aspect
+    exactly, whatever the clip ratio — and a square grid usually has spare cells. Spare
+    cells cost nothing extra: the sheet is one image call either way, and a discarded
+    cell is far cheaper than every panel composed for the wrong shape.
+    """
+    count = len(spec["shots"])
+    limit = max(count + 2, round(count * 1.7))
+    best, score = None, None
+    for cols in range(1, count + 1):
+        for rows in range(1, count + 1):
+            cells = cols * rows
+            if cells < count or cells > limit:
+                continue
+            _, error = sb.board_aspect({**spec, "board": {"cols": cols, "rows": rows}})
+            # Prefer the truer cell; break ties toward fewer wasted cells.
+            key = (round(error, 3), cells)
+            if score is None or key < score:
+                best, score = f"{cols}x{rows}", key
+    return f"{best} ({score[0] * 100:.0f}% off)" if best else "a different shot count"
+
+
 def cmd_story_board(args):
     """Phase 1: one image call -> a contact sheet -> sliced panels."""
     sb, spec, spec_path, workdir = _load_story(args)
@@ -1094,14 +1119,29 @@ def cmd_story_board(args):
         for path in (spec.get("cast") or {}).values()
     ]
 
+    # The sheet is a GRID of clips, so it is requested at the grid's aspect, not the
+    # clip's. They coincide only when cols == rows.
+    sheet_aspect, cell_error = sb.board_aspect(spec)
+    if cell_error > 0.12:
+        print(
+            f"Warning: a {cols}x{rows} grid of {spec.get('aspect', '16:9')} cells wants a "
+            f"sheet the backend does not offer; nearest is {sheet_aspect}, which draws "
+            f"each cell {cell_error * 100:.0f}% off its final shape. Panels will be "
+            f"letterboxed or cropped by the video model.\n"
+            f"  Pick a grid whose aspect is closer — for {len(spec['shots'])} cells at "
+            f"{spec.get('aspect', '16:9')}, try "
+            f"{_suggest_grid(sb, spec)} — or set board.aspect explicitly.",
+            file=sys.stderr,
+        )
+
     prompt = sb.compile_board_prompt(spec)
     estimate = _COST_MAP.get(f"image_{board_model}", 0.0)
     _confirm_spend(estimate, f"1 storyboard sheet ({cols}x{rows}, {board_model})", args.yes)
 
-    print(f"Generating {cols}x{rows} contact sheet...", file=sys.stderr)
+    print(f"Generating {cols}x{rows} contact sheet at {sheet_aspect}...", file=sys.stderr)
     try:
         sheet_bytes = _gemini_image(
-            prompt, board_model, spec.get("aspect", "16:9"), board_size, references
+            prompt, board_model, sheet_aspect, board_size, references
         )
     except Exception as e:
         print(f"Error generating the board: {e}", file=sys.stderr)

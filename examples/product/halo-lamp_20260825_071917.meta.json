@@ -1,0 +1,10 @@
+{
+  "type": "image",
+  "prompt": "Product photograph of a modern minimalist desk lamp on a plain light grey seamless background, studio lighting, three-quarter view. Brushed aluminium cylindrical base, a slim matte-white articulated arm, and a shallow conical shade angled down. A small warm-amber ring glows at the joint where the arm meets the base. Clean commercial product photography, sharp focus, soft shadow beneath. No text, no logo, no branding anywhere.",
+  "model": "gemini-3-pro-image",
+  "aspect_ratio": "1:1",
+  "size": "2K",
+  "transparent": false,
+  "reference_images": [],
+  "timestamp": "2026-08-25T07:19:17.780092"
+}

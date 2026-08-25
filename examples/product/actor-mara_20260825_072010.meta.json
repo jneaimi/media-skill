@@ -1,0 +1,10 @@
+{
+  "type": "image",
+  "prompt": "Character reference sheet, photographic. The same woman in her early thirties shown three times side by side against a plain light grey studio background: front view, three-quarter view, and profile. Warm mid-brown skin, dark hair tied back loosely, minimal makeup, small silver stud earrings. She wears a soft charcoal crew-neck sweater and dark jeans in all three. Even neutral studio lighting, natural realistic photography, sharp focus, consistent identical face and wardrobe across all three views. No text, no labels, no borders.",
+  "model": "gemini-3-pro-image",
+  "aspect_ratio": "16:9",
+  "size": "2K",
+  "transparent": false,
+  "reference_images": [],
+  "timestamp": "2026-08-25T07:20:10.962037"
+}

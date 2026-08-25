@@ -147,5 +147,66 @@ class TestSafeZones(unittest.TestCase):
         with self.assertRaises(adspec.AdSpecError): adspec.safe_zone("tiktok", 0, 1)
 
 
+class TestBoardAspect(unittest.TestCase):
+    """The contact sheet is a GRID of clips, so it must be requested at the grid's
+    aspect, not the clip's.
+
+    Passing the clip aspect straight through is correct only when cols == rows, which is
+    why a 2x2 sheet of 16:9 shots was right for months and the first 3x2 sheet of 9:16
+    shots was not: it asked for a 9:16 sheet, so every cell was drawn at 0.37 against a
+    0.56 target and the model composed for a sliver.
+    """
+
+    def _spec(self, aspect, cols, rows, shots=6):
+        return {
+            "version": 1, "aspect": aspect,
+            "board": {"cols": cols, "rows": rows},
+            "shots": [{"id": f"s{i}", "panel": "x", "action": "y"} for i in range(shots)],
+        }
+
+    def test_square_grid_preserves_the_cell_aspect_exactly(self):
+        # This is the property worth knowing when authoring: a square grid is always
+        # exact, whatever the clip ratio.
+        for aspect, cols in (("16:9", 2), ("9:16", 2), ("9:16", 3), ("1:1", 3), ("21:9", 2)):
+            chosen, error = storyboard.board_aspect(
+                self._spec(aspect, cols, cols, shots=cols * cols))
+            self.assertEqual(chosen, aspect, f"{cols}x{cols} of {aspect}")
+            self.assertAlmostEqual(error, 0.0, places=9, msg=f"{cols}x{cols} of {aspect}")
+
+    def test_non_square_grid_snaps_to_the_nearest_offered_ratio(self):
+        chosen, error = storyboard.board_aspect(self._spec("9:16", 3, 2))
+        self.assertEqual(chosen, "1:1")          # 27:32 = 0.844, nearest offered is 1:1
+        self.assertGreater(error, 0.12)          # and the caller is expected to warn
+
+    def test_the_regression_case_is_no_longer_silent(self):
+        """3x2 of 9:16 used to be requested AS 9:16, drawing 0.37 cells."""
+        chosen, _ = storyboard.board_aspect(self._spec("9:16", 3, 2))
+        self.assertNotEqual(chosen, "9:16")
+
+    def test_existing_two_by_two_sixteen_nine_is_unchanged(self):
+        chosen, error = storyboard.board_aspect(self._spec("16:9", 2, 2, shots=4))
+        self.assertEqual(chosen, "16:9")
+        self.assertAlmostEqual(error, 0.0, places=9)
+
+    def test_explicit_board_aspect_wins(self):
+        spec = self._spec("9:16", 3, 2)
+        spec["board"]["aspect"] = "2:3"
+        chosen, _ = storyboard.board_aspect(spec)
+        self.assertEqual(chosen, "2:3")
+
+    def test_board_aspect_is_a_known_board_key(self):
+        spec = self._spec("9:16", 3, 3, shots=9)
+        spec["board"]["aspect"] = "1:1"
+        storyboard.validate_spec(spec)  # must not raise on the unknown-key check
+
+    def test_every_choice_comes_from_the_supported_menu(self):
+        for aspect in storyboard.SUPPORTED_ASPECTS:
+            for cols in range(1, 5):
+                for rows in range(1, 5):
+                    chosen, _ = storyboard.board_aspect(
+                        self._spec(aspect, cols, rows, shots=cols * rows))
+                    self.assertIn(chosen, storyboard.SUPPORTED_ASPECTS)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

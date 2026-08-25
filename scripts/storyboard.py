@@ -49,6 +49,10 @@ NO_TEXT_GUARD = (
 
 CHAIN_MODES = ("bridge", "anchor")
 
+# What the image backend will actually accept. board_aspect() snaps to the nearest of
+# these, because the exact grid aspect is almost never on the menu.
+SUPPORTED_ASPECTS = ("1:1", "2:3", "3:2", "16:9", "9:16", "21:9")
+
 
 class StorySpecError(Exception):
     """Raised when a story spec is malformed. Message names the offending JSON path."""
@@ -160,7 +164,8 @@ def validate_spec(spec: dict) -> list[str]:
     board = spec.get("board") or {}
     if not isinstance(board, dict):
         raise StorySpecError("spec.board must be an object")
-    unknown_board = sorted(set(board) - {"cols", "rows", "image_model", "size", "inset", "autotrim"})
+    unknown_board = sorted(set(board) - {"cols", "rows", "image_model", "size", "inset",
+                                         "autotrim", "aspect"})
     if unknown_board:
         raise StorySpecError(f"spec.board: unknown key(s): {', '.join(unknown_board)}")
 
@@ -181,6 +186,39 @@ def validate_spec(spec: dict) -> list[str]:
         raise StorySpecError("spec.cast must be an object of name -> image path")
 
     return warnings
+
+
+def board_aspect(spec: dict, supported: tuple[str, ...] = SUPPORTED_ASPECTS) -> tuple[str, float]:
+    """(aspect_to_request, cell_error) for the contact sheet.
+
+    The board is a GRID of clips, so its aspect is the clip aspect scaled by the grid —
+    `(cols * w) : (rows * h)` — not the clip aspect itself. Passing the clip aspect
+    straight through is right only when cols == rows, which is why a 2x2 board of 16:9
+    shots looked correct for months and a 3x2 board of 9:16 shots did not: it asked for a
+    9:16 sheet, so every cell was drawn at 0.37 instead of 0.56 and the model composed
+    for a sliver.
+
+    Image models take a fixed menu of ratios, so the exact grid aspect usually isn't on
+    it. Snap to the nearest and return how wrong the resulting cell still is, so the
+    caller can warn rather than silently hand back distorted panels.
+    """
+    board = spec.get("board") or {}
+    cols, rows = grid_for(spec)
+    clip_w, clip_h = (float(n) for n in spec.get("aspect", "16:9").split(":"))
+    want = (cols * clip_w) / (rows * clip_h)
+
+    if board.get("aspect"):
+        chosen = board["aspect"]
+    else:
+        def distance(ratio: str) -> float:
+            w, h = (float(n) for n in ratio.split(":"))
+            return abs((w / h) - want)
+        chosen = min(supported, key=distance)
+
+    w, h = (float(n) for n in chosen.split(":"))
+    cell = (w / cols) / (h / rows)
+    target = clip_w / clip_h
+    return chosen, abs(cell - target) / target
 
 
 def grid_for(spec: dict) -> tuple[int, int]:
