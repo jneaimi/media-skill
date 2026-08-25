@@ -228,6 +228,16 @@ The phases above are separate so a person can approve between them. This section
 of it is worse than no stop at all, because people answer abstract questions vaguely and
 decisive ones instantly.
 
+**Gating is about direction before it is about money.** The expensive gate is easy to spot
+and easy to place; the ones that decide whether the film is any good all happen earlier,
+while nothing has been rendered yet. Who is in this — an existing character or a new one?
+What does the world look like? Which of these three moods? Those answers become `style`,
+`cast` and `product.refs`, and every panel and every clip inherits them. A pipeline that
+only stops at the invoice hands the human a finished ad built on choices they never made.
+
+So the gates come in two acts: **direction**, which is cheap and decides everything, and
+**production**, which is expensive and merely executes.
+
 **The gates are yours, not the script's.** `AskUserQuestion` is a Claude-side tool; the CLI
 cannot call it. So always pass `--yes` and own the spend decision here instead. The script's
 own `_confirm_spend` prompt is blind — a dollar figure with no artwork beside it — and it
@@ -240,34 +250,74 @@ Before writing a spec or spending anything:
 
 | Option | Behaviour |
 |---|---|
-| **Spend-gated** (recommend this) | Stop only where money is about to move — gates 4 and 5 |
-| **Guided** | Stop at every gate below |
+| **Direction-first** (recommend this) | Every direction gate, then B3 and B4; production runs through |
+| **Guided** | Stop at every gate in both acts |
+| **Spend-gated** | Only B3 and B4 — where money is about to move |
 | **Headless** | Never stop; run the chain and report once at the end |
+
+**Direction-first is the default recommendation** because it matches how the work actually
+divides: a person decides the look and the cast, then the machine executes. Offer
+**Guided** to someone doing this for the first time, and **Spend-gated** only when they
+have handed you a spec whose `style` and `cast` are already filled in — those fields being
+present *is* the direction decision, already made.
 
 **Skip the question when the answer is already known.** A dispatched subagent holding a
 complete spec runs headless. "Just make it" means headless; "walk me through it" means
 guided. Asking anyway is the friction this section exists to remove.
 
-### The gates
+### Act A — direction (nothing is written yet)
+
+Everything here is a `$0.04` image call or free, and all of it becomes spec fields. Run it
+*before* composing the spec, not after — these answers are the spec.
 
 | # | Fires | Put on screen first | Ask | Modes |
 |---|---|---|---|---|
-| 1 Brief | before writing the spec | — | format · platform · language | Guided |
-| 2 Plan | after `ad plan` | the beat sheet + cost line | approve / re-time / re-word | Guided; Spend if est. > $5 |
-| 3 Layout | after `ad preview` | safe-zone guide + caption stills | approve / move the text / change platform | Guided |
-| **4 Board** | after `ad board` | `board.png` and the sliced panels | **approve / re-roll the sheet / adjust the prompt** | **Guided + Spend** |
-| **5 Tier** | before `ad shots` | the cost table | provider · model · 768P draft vs 2K | **Guided + Spend** |
-| 6 Rushes | after `ad shots` | a $0 rough cut (below) | approve / re-roll a beat / hook variants | Guided |
-| 7 Motion | before `ad assemble` | `ad motion` catalogue | transitions + effects / clean cuts | Guided |
-| 8 Sound | after `ad assemble` | the mp4 | voiceover / music bed / silent | Guided |
+| A1 Brief | first | — | what is this selling · to whom · format · platform · language | Direction, Guided |
+| A2 Mood | after `image --count 3` on the brief | the three plates | **pick one / re-roll / blend two** | Direction, Guided |
+| A3 Cast | per character | `cast/refs/*.jpg` contact sheet | **reuse an existing character / create a new one** | Direction, Guided |
+| A3b New face | if A3 said create | `image --count 3 --reference <mood plate>` | pick the sheet / re-roll / adjust the brief | Direction, Guided |
+| A4 Product | ad mode, if there is a product | the supplied `product.refs` | these are the packaging shots / send better ones | Direction, Guided |
+| A5 Voice | if there is narration | 2–3 auditions of one line | pick the voice / re-cast / no narration | Direction, Guided |
 
-**Gate 4 is the load-bearing one.** It puts ~$0.10 of artwork in front of ~$8–12 of video,
-and it is the only gate that would still be worth having if you kept just one. Note the
+**A2 is where the film is decided.** Three plates at `flash` cost $0.12 total and set the
+palette, lighting and rendering that every panel inherits through the `style` field. Getting
+this wrong is not expensive to fix here and is ruinous to fix after the board.
+
+**A3 defaults to reuse, and reuse is free.** `cast/README.md` holds the bible — Omar, Sara,
+Khalid, Noor, Hamdan — each with a reference image in `cast/refs/` and a pinned voice in
+`cast/voices.json`. Shirt colour *is* identity in that world, so a recurring character must
+come back the same or continuity breaks across episodes. Only offer "create a new one" when
+none of the existing cast fits; a new face means a new reference sheet, a new pinned voice,
+and a decision to carry both forward.
+
+Approved outputs land in the spec: the chosen plate's description becomes `style`, each
+approved sheet becomes `cast["name"]`, the picked voice id is pinned. Show the composed
+spec before running Act B.
+
+### Act B — production (the phased chain)
+
+| # | Fires | Put on screen first | Ask | Modes |
+|---|---|---|---|---|
+| B1 Plan | after `ad plan` | the beat sheet + cost line | approve / re-time / re-word | Guided; Direction if est. > $5 |
+| B2 Layout | after `ad preview` | safe-zone guide + caption stills | approve / move the text / change platform | Guided |
+| **B3 Board** | after `ad board` | `board.png` and the sliced panels | **approve / re-roll the sheet / adjust the prompt** | **all but headless** |
+| **B4 Tier** | before `ad shots` | the cost table | provider · model · 768P draft vs 2K | **all but headless** |
+| B5 Rushes | after `ad shots` | a $0 rough cut (below) | approve / re-roll a beat / hook variants | Direction, Guided |
+| B6 Motion | before `ad assemble` | `ad motion` catalogue | transitions + effects / clean cuts | Guided |
+| B7 Sound | after `ad assemble` | the mp4 | voiceover / music bed / silent | Guided |
+
+**B3 is where the two acts meet.** The board is the first time the mood and the cast appear
+together in the actual shots, so it is both the last cheap look at the direction and the gate
+in front of ~$8–12 of video. It survives in every mode but headless for that reason. Note the
 board is a *single* image call that draws the whole grid, so "regenerate panel 3" does not
 exist — the honest option is re-rolling the sheet, which is cheap enough not to hurt.
 
-**Gate 6's artifact is free.** Assemble a rough cut with everything switched off — pure
-ffmpeg, no API call:
+**If B3 fails on direction rather than execution, go back to Act A.** A board that is
+well-drawn but the wrong world is an A2 problem, and re-rolling the sheet will keep
+producing the same wrong world at $0.12 a time.
+
+**B5's artifact is free.** Assemble a rough cut with everything switched off — pure ffmpeg,
+no API call:
 
 ```bash
 uv run $S ad assemble spec.json --no-captions --no-transitions --no-effects \
@@ -275,7 +325,11 @@ uv run $S ad assemble spec.json --no-captions --no-transitions --no-effects \
 ```
 
 Review the rushes there, spend on `--only <beat>` re-rolls if needed, and only then do the
-motion work. Story mode uses the same gates minus 1, 3, 7 and 8, which are ad-only phases.
+motion work.
+
+**Story mode runs the same gates** minus A4, B2, B6 and B7, which are ad-only phases. Act A
+matters *more* for a story than for an ad, not less — a multi-shot film lives or dies on
+whether the cast and the world hold across every panel.
 
 ### Running a gate
 
@@ -286,7 +340,15 @@ motion work. Story mode uses the same gates minus 1, 3, 7 and 8, which are ad-on
 - **Ask about the thing on screen**, not about the spec behind it: "approve these panels?"
   rather than "is the visual direction right?"
 - One decision per question; use multiple questions in one call only when they are genuinely
-  independent (gate 5's provider and resolution are).
+  independent (B4's provider and resolution are).
+- **Variant gates send every candidate and label them.** A2 and A3b generate with `--count 3`,
+  so send all three files and name the options after what distinguishes them — "warm dusk
+  interior", "hard studio white" — never "option 1 / 2 / 3", which asks the reader to hold a
+  mapping in their head while they look.
+- **Write the answer down before moving on.** A direction gate that is not persisted into the
+  spec (or into `cast/`) has to be asked again, and the second answer will not match the
+  first. Show the composed spec at the end of Act A so the accumulated choices are visible in
+  one place.
 - A gate that the user answers with a change re-runs its own phase and fires again. A gate
   never advances the chain on an ambiguous answer.
 

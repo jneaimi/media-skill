@@ -185,14 +185,23 @@ prompt returns a genuinely different performance each time — exactly what a ho
 
 ### Guided mode
 
-Run inside Claude Code and the assistant asks once how you want to work — **spend-gated**
-(stop only where money moves), **guided** (stop at every phase), or **headless** (run it
-all, report at the end) — then follows that for the whole build.
+Run inside Claude Code and the assistant asks once how you want to work — **direction-first**
+(decide the look and the cast, then let production run), **guided** (stop at every phase),
+**spend-gated** (stop only where money moves), or **headless** — then follows that for the
+whole build.
 
-The gates are placed where the cost asymmetry is: the board review puts ~$0.10 of artwork
-in front of ~$8–12 of video, and the rushes review is a free ffmpeg rough cut you watch
-before paying for any re-roll. Every gate renders its artifact before it asks, so you are
-approving a picture rather than a description. `SKILL.md` carries the full gate table.
+The gates come in two acts. **Direction** happens before a spec exists and is where the film
+is actually decided: three mood plates at $0.04 each to settle the palette and lighting, then
+the cast — reuse a character from the bible in `cast/`, which is free and keeps continuity, or
+generate a new reference sheet and pin it. Those answers *become* the spec's `style` and
+`cast`, and every panel and clip inherits them.
+
+**Production** is the phased chain, and its gates sit where the cost asymmetry is: the board
+review puts ~$0.10 of artwork in front of ~$8–12 of video, and the rushes review is a free
+ffmpeg rough cut you watch before paying for any re-roll.
+
+Every gate renders its artifact before it asks, so you approve a picture rather than a
+description. `SKILL.md` carries the full gate table.
 
 The CLI itself never blocks — it is the same non-interactive tool in every mode, so batch
 and agent use are unaffected.
