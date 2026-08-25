@@ -135,7 +135,8 @@ take. Drafts move to `clips/drafts/`. Direct-only; OpenRouter does not expose it
 regeneration can return 2592x1440 and 2560x1440 in the same batch, and `-c copy` would
 write one size into the header and let a segment disagree with it.
 
-Phases are separate so you approve between them, and `manifest.json` records a sha256 of
+Phases are separate so you approve between them — see **Guided mode** below for where to
+stop, what to show, and how to ask. `manifest.json` records a sha256 of
 the spec, the sheet, every panel and every clip as it goes — a crash on clip 6 never loses
 clips 1–5. See `examples/story-spec.json` for a complete spec.
 
@@ -219,6 +220,75 @@ marking of synthetic media since 2026-08-02.
 
 `examples/ad-spec.json` is a complete working 30s spec.
 `examples/ad-motion.json` is the same ad with transitions, effects and an overlay.
+
+## Guided mode — the human in the loop
+
+The phases above are separate so a person can approve between them. This section says
+*where* to stop and *what to put on screen first* — a stop with nothing rendered in front
+of it is worse than no stop at all, because people answer abstract questions vaguely and
+decisive ones instantly.
+
+**The gates are yours, not the script's.** `AskUserQuestion` is a Claude-side tool; the CLI
+cannot call it. So always pass `--yes` and own the spend decision here instead. The script's
+own `_confirm_spend` prompt is blind — a dollar figure with no artwork beside it — and it
+hard-exits 2 in a non-TTY, which is a deadlock in an agent dispatch. It is a backstop, never
+the gate.
+
+### Gate 0 — ask the mode first, once
+
+Before writing a spec or spending anything:
+
+| Option | Behaviour |
+|---|---|
+| **Spend-gated** (recommend this) | Stop only where money is about to move — gates 4 and 5 |
+| **Guided** | Stop at every gate below |
+| **Headless** | Never stop; run the chain and report once at the end |
+
+**Skip the question when the answer is already known.** A dispatched subagent holding a
+complete spec runs headless. "Just make it" means headless; "walk me through it" means
+guided. Asking anyway is the friction this section exists to remove.
+
+### The gates
+
+| # | Fires | Put on screen first | Ask | Modes |
+|---|---|---|---|---|
+| 1 Brief | before writing the spec | — | format · platform · language | Guided |
+| 2 Plan | after `ad plan` | the beat sheet + cost line | approve / re-time / re-word | Guided; Spend if est. > $5 |
+| 3 Layout | after `ad preview` | safe-zone guide + caption stills | approve / move the text / change platform | Guided |
+| **4 Board** | after `ad board` | `board.png` and the sliced panels | **approve / re-roll the sheet / adjust the prompt** | **Guided + Spend** |
+| **5 Tier** | before `ad shots` | the cost table | provider · model · 768P draft vs 2K | **Guided + Spend** |
+| 6 Rushes | after `ad shots` | a $0 rough cut (below) | approve / re-roll a beat / hook variants | Guided |
+| 7 Motion | before `ad assemble` | `ad motion` catalogue | transitions + effects / clean cuts | Guided |
+| 8 Sound | after `ad assemble` | the mp4 | voiceover / music bed / silent | Guided |
+
+**Gate 4 is the load-bearing one.** It puts ~$0.10 of artwork in front of ~$8–12 of video,
+and it is the only gate that would still be worth having if you kept just one. Note the
+board is a *single* image call that draws the whole grid, so "regenerate panel 3" does not
+exist — the honest option is re-rolling the sheet, which is cheap enough not to hurt.
+
+**Gate 6's artifact is free.** Assemble a rough cut with everything switched off — pure
+ffmpeg, no API call:
+
+```bash
+uv run $S ad assemble spec.json --no-captions --no-transitions --no-effects \
+                                --no-overlays --output rough.mp4
+```
+
+Review the rushes there, spend on `--only <beat>` re-rolls if needed, and only then do the
+motion work. Story mode uses the same gates minus 1, 3, 7 and 8, which are ad-only phases.
+
+### Running a gate
+
+- **Render, then ask.** `SendUserFile` the artifact in the same turn, above the question.
+- 2–4 options, mutually exclusive. "Other" is appended automatically, so a free-form
+  redirect ("make the CTA say X instead") needs no option of its own — do not burn one of
+  the four on it.
+- **Ask about the thing on screen**, not about the spec behind it: "approve these panels?"
+  rather than "is the visual direction right?"
+- One decision per question; use multiple questions in one call only when they are genuinely
+  independent (gate 5's provider and resolution are).
+- A gate that the user answers with a change re-runs its own phase and fires again. A gate
+  never advances the chain on an ambiguous answer.
 
 ## Motion — transitions, effects, overlays
 

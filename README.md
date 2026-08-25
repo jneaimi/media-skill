@@ -183,6 +183,20 @@ prompt returns a genuinely different performance each time — exactly what a ho
 > `"disclosure": true` burns an `AI-generated` mark for the whole film. The EU AI Act's
 > Article 50 has required marking of synthetic media since 2 August 2026.
 
+### Guided mode
+
+Run inside Claude Code and the assistant asks once how you want to work — **spend-gated**
+(stop only where money moves), **guided** (stop at every phase), or **headless** (run it
+all, report at the end) — then follows that for the whole build.
+
+The gates are placed where the cost asymmetry is: the board review puts ~$0.10 of artwork
+in front of ~$8–12 of video, and the rushes review is a free ffmpeg rough cut you watch
+before paying for any re-roll. Every gate renders its artifact before it asks, so you are
+approving a picture rather than a description. `SKILL.md` carries the full gate table.
+
+The CLI itself never blocks — it is the same non-interactive tool in every mode, so batch
+and agent use are unaffected.
+
 ---
 
 ## Motion — transitions, effects, overlays
