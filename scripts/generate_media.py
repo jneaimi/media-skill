@@ -1626,6 +1626,24 @@ def cmd_ad_assemble(args):
     # different pixel count.
     safe = ad.safe_zone(plan["platform"], width, height)
 
+    # Re-time against the clips that actually came back. The model does not honour the
+    # duration it was asked for — H3 answers a 6s request with 6.583s — so cues timed on
+    # the plan drift further out of sync with every beat.
+    story_spec = sb.load_spec(story_path)
+    clips_dir = workdir / "clips"
+    measured = [
+        sb.probe_duration(clips_dir / sb.clip_filename(entry))
+        for entry in sb.clip_plan(story_spec)
+    ]
+    if all(seconds is not None for seconds in measured):
+        planned = sum(beat["duration"] for beat in plan["beats"])
+        real = sum(measured)
+        if abs(real - planned) > 0.25:
+            print(f"Note: clips total {real:.2f}s against a planned {planned}s — "
+                  f"re-timing {len(plan['cues'])} cue(s) onto the real footage.",
+                  file=sys.stderr)
+        plan["cues"] = ad.retime_cues(plan["cues"], plan["beats"], measured)
+
     try:
         cues = cap.parse_cues(plan["cues"])
         cap.burn(silent, cues, final, width=width, height=height, safe=safe,

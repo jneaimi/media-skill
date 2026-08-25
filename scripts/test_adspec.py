@@ -147,6 +147,82 @@ class TestSafeZones(unittest.TestCase):
         with self.assertRaises(adspec.AdSpecError): adspec.safe_zone("tiktok", 0, 1)
 
 
+class TestRetimeCues(unittest.TestCase):
+    """Cues are planned against requested durations; clips come back longer.
+
+    H3 answers a 6s request with 6.583s, so a five-beat ad planned at 30s arrives at
+    ~32.9s. Left alone, every cue after the first drifts against the footage it belongs
+    to and the CTA caption lands on the previous shot.
+    """
+
+    BEATS = [
+        {"id": "hook", "index": 0, "start": 0.0, "end": 6.0, "duration": 6},
+        {"id": "problem", "index": 1, "start": 6.0, "end": 12.0, "duration": 6},
+        {"id": "solution", "index": 2, "start": 12.0, "end": 19.0, "duration": 7},
+        {"id": "proof", "index": 3, "start": 19.0, "end": 25.0, "duration": 6},
+        {"id": "cta", "index": 4, "start": 25.0, "end": 30.0, "duration": 5},
+    ]
+    CUES = [
+        {"start": 0.0, "end": 6.0, "role": "hook", "text": "a"},
+        {"start": 6.0, "end": 12.0, "role": "caption", "text": "b"},
+        {"start": 12.0, "end": 19.0, "role": "caption", "text": "c"},
+        {"start": 19.0, "end": 25.0, "role": "caption", "text": "d"},
+        {"start": 25.0, "end": 30.0, "role": "cta", "text": "e"},
+        {"start": 0.0, "end": 30.0, "role": "disclosure", "text": "AI-generated"},
+    ]
+    ACTUAL = [6.583, 6.583, 7.583, 6.583, 5.583]
+
+    def test_each_cue_lands_on_its_own_real_beat_window(self):
+        out = adspec.retime_cues(self.CUES, self.BEATS, self.ACTUAL)
+        edges, run = [0.0], 0.0
+        for seconds in self.ACTUAL:
+            run += seconds
+            edges.append(round(run, 3))
+        for index in range(5):
+            self.assertAlmostEqual(out[index]["start"], edges[index], places=2)
+            self.assertAlmostEqual(out[index]["end"], edges[index + 1], places=2)
+
+    def test_disclosure_spans_the_whole_real_film(self):
+        out = adspec.retime_cues(self.CUES, self.BEATS, self.ACTUAL)
+        disclosure = next(c for c in out if c["role"] == "disclosure")
+        self.assertEqual(disclosure["start"], 0.0)
+        self.assertAlmostEqual(disclosure["end"], sum(self.ACTUAL), places=2)
+
+    def test_cta_moves_later_not_earlier(self):
+        """The regression: a CTA left at 25.0s captions the proof shot, not the CTA shot."""
+        out = adspec.retime_cues(self.CUES, self.BEATS, self.ACTUAL)
+        cta = next(c for c in out if c["role"] == "cta")
+        self.assertGreater(cta["start"], 27.0)
+        self.assertLess(abs(cta["end"] - sum(self.ACTUAL)), 0.01)
+
+    def test_identity_when_clips_match_the_plan(self):
+        out = adspec.retime_cues(self.CUES, self.BEATS, [6, 6, 7, 6, 5])
+        for before, after in zip(self.CUES, out):
+            self.assertAlmostEqual(before["start"], after["start"], places=6)
+            self.assertAlmostEqual(before["end"], after["end"], places=6)
+
+    def test_shorter_clips_pull_cues_earlier(self):
+        out = adspec.retime_cues(self.CUES, self.BEATS, [5, 5, 6, 5, 4])
+        self.assertAlmostEqual(out[-1]["end"], 25.0, places=2)
+
+    def test_input_not_mutated(self):
+        adspec.retime_cues(self.CUES, self.BEATS, self.ACTUAL)
+        self.assertEqual(self.CUES[4]["start"], 25.0)
+
+    def test_count_mismatch_raises(self):
+        with self.assertRaises(adspec.AdSpecError) as ctx:
+            adspec.retime_cues(self.CUES, self.BEATS, [6.0, 6.0])
+        self.assertIn("2 clip duration", str(ctx.exception))
+
+    def test_empty_inputs_pass_through(self):
+        self.assertEqual(adspec.retime_cues(self.CUES, [], []), self.CUES)
+
+    def test_never_produces_a_zero_length_cue(self):
+        out = adspec.retime_cues(self.CUES, self.BEATS, self.ACTUAL)
+        for cue in out:
+            self.assertGreater(cue["end"], cue["start"])
+
+
 class TestBoardAspect(unittest.TestCase):
     """The contact sheet is a GRID of clips, so it must be requested at the grid's
     aspect, not the clip's.

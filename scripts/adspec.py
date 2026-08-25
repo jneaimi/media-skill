@@ -332,6 +332,53 @@ def compile_board_prompt_extra(spec: dict) -> str:
     return text
 
 
+def retime_cues(cues: list[dict], beats: list[dict], actual: list[float]) -> list[dict]:
+    """Re-time cues from the PLANNED beat durations onto the clips that actually came back.
+
+    Video models do not return the duration you asked for. H3 answers a 6s request with
+    6.583s, so a five-beat ad planned at 30s arrives as ~32.9s — and every cue after the
+    first drifts later and later against the footage it belongs to, with the CTA landing
+    around three seconds before the shot it is captioning. The plan is a budget, not a
+    timeline.
+
+    Each cue is mapped piecewise-linearly from its planned beat window onto that beat's
+    real window, so a caption still starts and ends with its own shot. A cue that spans
+    the whole film (the disclosure) stretches to the whole real film, because it is
+    clamped by the first and last beat like any other.
+    """
+    if not beats or not actual:
+        return [dict(cue) for cue in cues]
+    if len(actual) != len(beats):
+        raise AdSpecError(
+            f"retime_cues: {len(actual)} clip duration(s) for {len(beats)} beat(s)\n"
+            "  Every beat must have a clip before the cues can be re-timed — run `ad shots`."
+        )
+
+    edges = [0.0]
+    for seconds in actual:
+        edges.append(edges[-1] + float(seconds))
+
+    def remap(t: float) -> float:
+        for index, beat in enumerate(beats):
+            span = beat["end"] - beat["start"]
+            if t < beat["end"] or index == len(beats) - 1:
+                fraction = 0.0 if span <= 0 else (t - beat["start"]) / span
+                fraction = min(max(fraction, 0.0), 1.0) if index < len(beats) - 1 else max(fraction, 0.0)
+                real = edges[index] + fraction * (edges[index + 1] - edges[index])
+                return min(max(real, 0.0), edges[-1])
+        return edges[-1]
+
+    out = []
+    for cue in cues:
+        moved = dict(cue)
+        moved["start"] = round(remap(float(cue["start"])), 3)
+        moved["end"] = round(remap(float(cue["end"])), 3)
+        if moved["end"] <= moved["start"]:
+            moved["end"] = round(min(moved["start"] + 0.2, edges[-1]), 3)
+        out.append(moved)
+    return out
+
+
 def estimate(plan: dict, per_second: float, board_cost: float) -> dict:
     clips = len(plan["story"]["shots"]) - 1; seconds = sum(beat["duration"] for beat in plan["beats"])
     clip_cost = round(seconds * per_second, 4)

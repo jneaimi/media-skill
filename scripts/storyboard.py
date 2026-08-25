@@ -542,6 +542,26 @@ def probe_size(path: Path) -> tuple[int, int] | None:
         return None
 
 
+def probe_duration(path: Path) -> float | None:
+    """Container duration in seconds, or None if ffprobe can't say.
+
+    Needed because the model does not return the duration it was asked for — a 6s H3
+    request comes back at 6.583s — so anything timed against the plan (captions, a
+    voiceover) has to be re-timed against this instead.
+    """
+    if shutil.which("ffprobe") is None or not Path(path).is_file():
+        return None
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True,
+    )
+    try:
+        return float(result.stdout.strip().splitlines()[0])
+    except (ValueError, IndexError):
+        return None
+
+
 def assemble(clips: list[Path], output: Path) -> Path:
     """Concatenate clips with ffmpeg's concat demuxer.
 
