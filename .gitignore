@@ -13,3 +13,7 @@ examples/*-ad/
 examples/story-768p/
 examples/*-ad/motion/
 examples/*-ad/overlays/
+
+# Rendered sample films — regenerate them from the specs in examples/ instead
+# of carrying megabytes of video in a docs repo
+docs/*.mp4
