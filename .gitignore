@@ -11,3 +11,5 @@ examples/*-ad/
 # Finder-compressed working folders
 *.zip
 examples/story-768p/
+examples/*-ad/motion/
+examples/*-ad/overlays/

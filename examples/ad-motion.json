@@ -1,0 +1,173 @@
+{
+  "version": 1,
+  "kind": "ad",
+  "title": "halo-desk-lamp-motion",
+  "format": "problem-solution",
+  "platform": "tiktok",
+  "duration": 30,
+  "model": "hailuo-3",
+  "provider": "minimax",
+  "resolution": "768P",
+  "style": "photoreal handheld lifestyle footage shot on a fast prime, shallow depth of field, natural practical lighting, restrained colour grade of cool blue-grey shadows against warm amber highlights, the look of an unstaged phone-shot moment rather than a commercial",
+  "product": {
+    "name": "the Halo desk lamp \u2014 a brushed-aluminium cylindrical base, a slim matte-white articulated arm, and a shallow conical matte-white shade, with a small warm-amber ring glowing where the arm meets the base",
+    "refs": [
+      "product/halo-lamp_20260825_071917.png"
+    ],
+    "palette": "brushed aluminium, matte white and warm amber",
+    "claims": [
+      "adjusts to the light in the room"
+    ],
+    "banned_claims": [
+      "cures",
+      "guaranteed",
+      "medical",
+      "clinically proven",
+      "eliminates"
+    ]
+  },
+  "actor": {
+    "name": "Mara",
+    "ref": "product/actor-mara_20260825_072010.png"
+  },
+  "beats": [
+    {
+      "id": "hook",
+      "panel": "vertical close shot of Mara at a dim desk late at night in a small flat, wearing her charcoal grey crew-neck sweater and dark jeans. The laptop screen is the only light source, throwing hard blue light up onto her face. She has one hand raised to shield her eyes from the glare.",
+      "action": "Mara pushes back from the desk and presses her fingers against her closed eyes",
+      "camera": "slow push in",
+      "say": "I thought I just needed more coffee.",
+      "caption": "I thought I just needed more coffee.",
+      "sound": {
+        "ambience": "a quiet flat at night, a fridge humming two rooms away, one distant car",
+        "music": "N/A"
+      }
+    },
+    {
+      "id": "problem",
+      "panel": "vertical wide shot of the same desk from across the room, Mara seated at it wearing her charcoal grey crew-neck sweater and dark jeans. A hard white ceiling bulb overhead throws a sharp shadow of her own hand across the keyboard, and a bright reflection sits square in the middle of the laptop screen.",
+      "action": "Mara tilts the laptop screen back and forth, hunting for an angle where the reflection is not in the way",
+      "camera": "locked static shot",
+      "caption": "It was never the coffee.",
+      "sound": {
+        "ambience": "room tone, one chair creak, the screen hinge",
+        "music": "a low sustained synth note entering"
+      }
+    },
+    {
+      "id": "solution",
+      "panel": "vertical medium shot from the side of Mara at the desk, wearing her charcoal grey crew-neck sweater and dark jeans, her hands setting the Halo desk lamp \u2014 squat brushed-aluminium CYLINDRICAL base, a slim perfectly STRAIGHT matte-white arm angled up from it, a shallow conical matte-white shade, and a thin warm-amber ring glowing where the arm meets the base down beside the laptop, the shade angled down over the keyboard.",
+      "action": "Mara sets the lamp down and tilts the shade over the keyboard; warm light spreads across the desk and the harsh overhead glare falls away",
+      "camera": "slow arc shot",
+      "say": "One lamp. That was the whole fix.",
+      "caption": "One lamp. That was the whole fix.",
+      "sound": {
+        "ambience": "a soft mechanical click, the room tone opening up",
+        "music": "the synth resolving into something warm"
+      },
+      "transition": {
+        "type": "GL_DOORWAY",
+        "duration": 0.5,
+        "easing": "cubic-in-out"
+      }
+    },
+    {
+      "id": "proof",
+      "panel": "vertical over-the-shoulder shot from behind Mara, wearing her charcoal grey crew-neck sweater and dark jeans. the Halo desk lamp \u2014 squat brushed-aluminium CYLINDRICAL base, a slim perfectly STRAIGHT matte-white arm angled up from it, a shallow conical matte-white shade, and a thin warm-amber ring glowing where the arm meets the base stands at the edge of frame. The laptop screen is now clearly readable with no reflection across it, and her face is lit warm from the side by the lamp instead of blue from the front.",
+      "action": "Mara leans back in toward the desk, her shoulders dropping, and begins typing steadily",
+      "camera": "slow push in",
+      "caption": "No glare. No squinting.",
+      "sound": {
+        "ambience": "steady unhurried typing, the room quiet around it",
+        "music": "the warm bed continuing underneath"
+      },
+      "effects": [
+        {
+          "name": "zoom_punch",
+          "at": 0.4,
+          "duration": 0.6,
+          "scale": 1.14,
+          "width": 768,
+          "height": 1376,
+          "fps": 30
+        }
+      ]
+    },
+    {
+      "id": "cta",
+      "panel": "vertical shot of the Halo desk lamp \u2014 squat brushed-aluminium CYLINDRICAL base, a slim perfectly STRAIGHT matte-white arm angled up from it, a shallow conical matte-white shade, and a thin warm-amber ring glowing where the arm meets the base, alone on the now-cleared desk, lit warm against the dark room, the closed laptop beside it.",
+      "action": "the camera settles as the room dims around the lamp and its own warm pool of light holds",
+      "camera": "crane down",
+      "sound": {
+        "ambience": "the flat quiet again, a single distant car",
+        "music": "the bed fading out"
+      },
+      "transition": {
+        "type": "circleopen",
+        "duration": 0.45
+      },
+      "effects": [
+        {
+          "name": "ken_burns",
+          "direction": "in",
+          "zoom_from": 1.0,
+          "zoom_to": 1.12,
+          "duration": 6.0,
+          "width": 768,
+          "height": 1376,
+          "fps": 30
+        }
+      ]
+    }
+  ],
+  "captions": {
+    "style": "bold",
+    "burn": true
+  },
+  "cta": {
+    "text": "Halo desk lamp \u2014 link in bio",
+    "panel": "vertical shot of the Halo desk lamp \u2014 squat brushed-aluminium CYLINDRICAL base, a slim perfectly STRAIGHT matte-white arm angled up from it, a shallow conical matte-white shade, and a thin warm-amber ring glowing where the arm meets the base, alone on the cleared desk, held perfectly still, warm against the dark room."
+  },
+  "disclosure": true,
+  "board": {
+    "cols": 3,
+    "rows": 3,
+    "image_model": "pro",
+    "size": "4K"
+  },
+  "transition": {
+    "type": "fade",
+    "duration": 0.35
+  },
+  "overlays": [
+    {
+      "badge": "50% OFF",
+      "style": "starburst",
+      "beat": "cta",
+      "anchor": "center",
+      "offset": [
+        0.0,
+        -0.22
+      ],
+      "scale": 0.4,
+      "fade_in": 0.25,
+      "fade_out": 0.4,
+      "tracks": [
+        {
+          "prop": "scale",
+          "easing": "back_out",
+          "keys": [
+            {
+              "t": 26.0,
+              "value": 0.0
+            },
+            {
+              "t": 26.45,
+              "value": 1.0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

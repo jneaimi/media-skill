@@ -1599,6 +1599,114 @@ def cmd_ad_regenerate(args):
     cmd_story_regenerate(_ad_story_args(args, story_path, workdir))
 
 
+def cmd_ad_motion(args):
+    """Print what this machine's ffmpeg can actually do — not what the docs claim.
+
+    The catalogue is build-dependent in both directions: native transitions come from the
+    installed ffmpeg's own xfade, and 16 of the vendored expressions are sentinels for
+    transitions that exist only in a patched build. Printing the resolved lists is the
+    difference between a spec that renders and one that fails at the last step.
+    """
+    sys.path.insert(0, str(Path(__file__).parent))
+    import effects as fx
+    import transitions as tr
+
+    out = {}
+    kind = args.kind
+    if kind in ("all", "native"):
+        out["native"] = tr.available("native")
+    if kind in ("all", "eased"):
+        out["eased"] = tr.available("eased")
+    if kind in ("all", "gl"):
+        out["gl"] = tr.available("gl")
+    if kind in ("all", "easings"):
+        out["easings"] = sorted(tr.easings())
+    if kind in ("all", "effects"):
+        out["effects"] = fx.available()
+        unavailable = fx.unavailable()
+        if unavailable:
+            out["effects_unavailable"] = {k: list(v) for k, v in unavailable.items()}
+    for name, values in out.items():
+        if isinstance(values, dict):
+            for effect, missing in values.items():
+                print(f"{name}: {effect} needs {', '.join(missing)}", file=sys.stderr)
+            continue
+        print(f"\n{name} ({len(values)}):", file=sys.stderr)
+        print("  " + "  ".join(values), file=sys.stderr)
+    print(file=sys.stderr)
+    json.dump(out, sys.stdout, indent=2)
+    print()
+
+
+def _ad_apply_effects(clips, per_clip, workdir):
+    """Render each clip's effects, returning the new paths. Untouched clips pass through."""
+    import effects as fx
+
+    out_dir = workdir / "motion"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    result = []
+    for index, clip in enumerate(clips):
+        items = per_clip[index] if index < len(per_clip) else []
+        if not items:
+            result.append(clip)
+            continue
+        # The clip's own rate wins over anything the spec says. zoompan's `fps` re-times
+        # rather than resamples, so a spec that names 30 for 24fps footage quietly returns
+        # a shorter clip — and the loss only shows up later as a film whose video ends
+        # before its audio. The author cannot know the rate the model returned; we can
+        # measure it, so we do.
+        real_fps = fx._probe_fps(clip)
+        built = []
+        for item in items:
+            params = {k: v for k, v in item.items() if k != "name"}
+            if "fps" in params and real_fps and abs(params["fps"] - real_fps) > 0.01:
+                print(f"  note: {item['name']} asked for fps={params['fps']} but "
+                      f"{clip.name} is {real_fps:g}fps — using the clip's rate",
+                      file=sys.stderr)
+                params["fps"] = round(real_fps, 3)
+            built.append(fx.build(item["name"], **params))
+        target = out_dir / f"fx-{index:02d}-{clip.name}"
+        fx.apply_to(clip, built, target)
+        print(f"  effects on clip {index}: {', '.join(i['name'] for i in items)}",
+              file=sys.stderr)
+        result.append(target)
+    return result
+
+
+def _ad_overlay_assets(entries, workdir):
+    """Turn the plan's overlay entries into overlays.Overlay objects, rendering any
+    preset graphics (badge/arrow) that the spec asked for by text rather than by file."""
+    import overlays as ov
+
+    asset_dir = workdir / "overlays"
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    built = []
+    for index, entry in enumerate(entries):
+        item = dict(entry)
+        ident = item.pop("id", f"overlay_{index + 1}")
+        if item.get("asset"):
+            asset = Path(item.pop("asset")).expanduser()
+            if not asset.is_absolute():
+                asset = (workdir / asset) if (workdir / asset).exists() else Path.cwd() / asset
+        elif item.get("badge") is not None:
+            asset = ov.badge(item.pop("badge"), asset_dir / f"badge-{index:02d}.png",
+                             style=item.pop("style", "pill"),
+                             fill=item.pop("fill", "#d4713a"))
+        else:
+            asset = ov.arrow(asset_dir / f"arrow-{index:02d}.png",
+                             direction=item.pop("arrow"))
+        item.pop("text", None)
+        item.pop("style", None)
+        item.pop("fill", None)
+        tracks = [ov.Track(t["prop"], [ov.Keyframe(float(k["t"]), float(k["value"]))
+                                       for k in t["keys"]], t.get("easing", "ease_out"))
+                  for t in item.pop("tracks", [])]
+        offset = item.pop("offset", (0.0, 0.0))
+        built.append(ov.Overlay(asset=asset, id=ident, tracks=tracks,
+                                offset=(float(offset[0]), float(offset[1])), **item))
+    return built
+
+
 def cmd_ad_assemble(args):
     """Concatenate the clips, then burn the text unless --no-captions."""
     sys.path.insert(0, str(Path(__file__).parent))
@@ -1609,10 +1717,75 @@ def cmd_ad_assemble(args):
     story_path = _write_compiled_story(plan, workdir)
 
     silent = workdir / f"{spec_path.stem}-silent.mp4"
-    cmd_story_assemble(_ad_story_args(args, story_path, workdir, output=str(silent)))
+    cut_plan = [] if getattr(args, "no_transitions", False) else plan.get("transitions") or []
+    fx_plan = [] if getattr(args, "no_effects", False) else plan.get("effects") or []
+    has_cuts = any(cut_plan)
+    has_fx = any(fx_plan)
+
+    if has_cuts or has_fx:
+        import transitions as tr
+
+        story_spec = sb.load_spec(story_path)
+        clips_dir = workdir / "clips"
+        clip_paths = [clips_dir / sb.clip_filename(entry) for entry in sb.clip_plan(story_spec)]
+        missing = [str(p) for p in clip_paths if not p.is_file()]
+        if missing:
+            print(f"Error: {len(missing)} clip(s) missing — run `ad shots` first:\n  "
+                  + "\n  ".join(missing[:5]), file=sys.stderr)
+            sys.exit(2)
+        if has_fx:
+            clip_paths = _ad_apply_effects(clip_paths, fx_plan, workdir)
+        if has_cuts:
+            chain = []
+            for index, path in enumerate(clip_paths):
+                seconds = tr.measure(path)
+                if seconds is None:
+                    print(f"Error: cannot measure {path} — is ffprobe installed?", file=sys.stderr)
+                    sys.exit(2)
+                entry = cut_plan[index] if index < len(cut_plan) else None
+                cut = tr.resolve(entry["type"], float(entry["duration"]),
+                                 entry.get("easing")) if entry else None
+                chain.append(tr.Clip(path=path, duration=seconds, transition=cut))
+            for problem in tr.validate(chain):
+                print(f"Warning: {problem}", file=sys.stderr)
+            named = [f"{c.transition.name}" for c in chain if c.transition]
+            print(f"Transitions: {len(named)} cut(s) — {', '.join(named)}; "
+                  f"film shortens to {tr.total_duration(chain):.2f}s", file=sys.stderr)
+            try:
+                tr.render(chain, silent, audio=True)
+            except tr.TransitionError as e:
+                print(f"Error: {e}", file=sys.stderr)
+                sys.exit(2)
+        else:
+            import admux
+            admux.assemble_variant(clip_paths, silent)
+    else:
+        cmd_story_assemble(_ad_story_args(args, story_path, workdir, output=str(silent)))
 
     final = Path(args.output).expanduser() if args.output else \
         workdir / f"{spec_path.stem}.mp4"
+
+    # Graphics go on BEFORE the captions so the words end up on top. A badge over a
+    # caption is a badge that made the line unreadable.
+    overlay_entries = [] if getattr(args, "no_overlays", False) else plan.get("overlays") or []
+    if overlay_entries:
+        import overlays as ov
+        import storyboard as sb2
+
+        size = sb2.probe_size(silent)
+        width, height = size if size else _ad_platform_size(plan)
+        safe = ad.safe_zone(plan["platform"], width, height)
+        try:
+            built = _ad_overlay_assets(overlay_entries, workdir)
+            for problem in ov.validate(built, frame_w=width, frame_h=height, safe=safe):
+                print(f"Warning: {problem}", file=sys.stderr)
+            with_graphics = workdir / f"{spec_path.stem}-graphics.mp4"
+            ov.burn(silent, built, with_graphics, safe=safe)
+            silent = with_graphics
+            print(f"Overlays: {len(built)} graphic(s) composited", file=sys.stderr)
+        except ov.OverlayError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(2)
 
     burn = plan["cues"] and not args.no_captions \
         and (spec.get("captions") or {}).get("burn", True)
@@ -1642,11 +1815,14 @@ def cmd_ad_assemble(args):
     if all(seconds is not None for seconds in measured):
         planned = sum(beat["duration"] for beat in plan["beats"])
         real = sum(measured)
-        if abs(real - planned) > 0.25:
-            print(f"Note: clips total {real:.2f}s against a planned {planned}s — "
-                  f"re-timing {len(plan['cues'])} cue(s) onto the real footage.",
+        lost = sum(float(t["duration"]) for t in cut_plan if t)
+        if abs(real - lost - planned) > 0.25:
+            print(f"Note: clips total {real:.2f}s against a planned {planned}s"
+                  + (f", less {lost:.2f}s of transition overlap" if lost else "")
+                  + f" — re-timing {len(plan['cues'])} cue(s) onto the real footage.",
                   file=sys.stderr)
-        plan["cues"] = ad.retime_cues(plan["cues"], plan["beats"], measured)
+        plan["cues"] = ad.retime_cues(plan["cues"], plan["beats"], measured,
+                                      cut_plan if any(cut_plan) else None)
 
     try:
         cues = cap.parse_cues(plan["cues"])
@@ -1989,7 +2165,20 @@ def main():
     ad_asm_p.add_argument("--output", help="Output mp4 path")
     ad_asm_p.add_argument("--no-captions", action="store_true",
                           help="Leave the film clean; still writes the .srt")
+    ad_asm_p.add_argument("--no-transitions", action="store_true",
+                          help="Hard-cut every shot, ignoring the spec's transitions")
+    ad_asm_p.add_argument("--no-effects", action="store_true",
+                          help="Skip the spec's per-beat effects")
+    ad_asm_p.add_argument("--no-overlays", action="store_true",
+                          help="Skip the spec's graphic overlays")
     ad_asm_p.set_defaults(func=cmd_ad_assemble)
+
+    ad_motion_p = ad_sub.add_parser(
+        "motion", help="List the transitions, effects and easings available here")
+    ad_motion_p.add_argument("--kind", default="all",
+                             choices=("all", "native", "eased", "gl", "effects", "easings"),
+                             help="Which catalogue to print")
+    ad_motion_p.set_defaults(func=cmd_ad_motion)
 
     ad_voice_p = ad_sub.add_parser(
         "voice", help="Mux a voiceover and/or a music bed onto a finished ad")

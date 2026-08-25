@@ -533,6 +533,11 @@ def effect_plan(spec: dict, resolved: list[dict]) -> list[list[dict]]:
     those are the same thing; when it is several, an effect at 12s belongs to the third
     clip at 2s, not to the first clip at 12s — where it would land past the end and
     silently never fire.
+
+    An effect with no `at` is not a moment, it is a treatment of the whole shot —
+    ken_burns, color_pop, a grade. Those apply to every clip of the beat, unchanged. Only
+    a timed effect gets rebased, and only a timed effect can be filtered out for landing
+    outside a given clip.
     """
     total_clips = sum(beat["clips"] for beat in resolved)
     plan: list[list[dict]] = [[] for _ in range(total_clips)]
@@ -541,7 +546,10 @@ def effect_plan(spec: dict, resolved: list[dict]) -> list[list[dict]]:
         for part, seconds in enumerate(timing["clip_durations"]):
             clip_start, clip_end = cursor, cursor + seconds
             for item in beat.get("effects") or []:
-                at = float(item.get("at", 0.0))
+                if "at" not in item:
+                    plan[timing["first_clip"] + part].append(dict(item))
+                    continue
+                at = float(item["at"])
                 span = float(item.get("duration", 0.0))
                 if at >= clip_end or (span and at + span <= clip_start):
                     continue
