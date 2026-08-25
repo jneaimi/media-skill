@@ -153,6 +153,72 @@ frame the model drew inside the cell — image models add keylines and paper mar
 firmly the prompt forbids them, and a drawn border becomes a bar baked into every frame of
 the clip.
 
+## Ad mode — social video ads
+
+An ad spec **compiles down into a story spec**, so the whole board → shots → assemble
+chain above runs unchanged. `ad` adds what a story does not have: a named format with a
+beat skeleton, a platform safe zone, a product that must stay on-model, and burned-in
+text (correct Arabic included).
+
+```bash
+uv run ~/.claude/skills/media/scripts/generate_media.py ad plan     spec.json  # beats, prompts, cues, cost — spends nothing
+uv run ~/.claude/skills/media/scripts/generate_media.py ad preview  spec.json  # safe-zone guide + caption stills — spends nothing
+uv run ~/.claude/skills/media/scripts/generate_media.py ad board    spec.json  # one image call → the panel grid
+uv run ~/.claude/skills/media/scripts/generate_media.py ad shots    spec.json  # chain the panels into clips
+uv run ~/.claude/skills/media/scripts/generate_media.py ad assemble spec.json  # concat + burn the text
+```
+
+**Formats** (`"format"`), each supplying an ordered beat skeleton and a duration split:
+
+| actor-led | faceless |
+|---|---|
+| `problem-solution` · `testimonial` · `unboxing` · `before-after` · `tutorial` | `hero-product` · `asmr` · `kinetic-text` · `explainer` · `hands-demo` |
+
+`custom` skips the role check and takes any beat ids.
+
+**Platforms** (`"platform"`) set the aspect ratio *and* the safe zone: `tiktok`, `reels`,
+`shorts`, `feed`, `youtube`. Text is laid out inside the safe box, never the frame —
+TikTok covers the top 10%, right 10% and bottom 20% with its own UI, and copy under that
+is copy nobody reads. `ad preview` renders the guide so you can check a layout before
+paying for a single clip.
+
+**Product fidelity.** Video models cannot hold a product on-model from text — ask for
+"a woman holding a bottle of X" and the label is invented. So `product.refs` are carried
+into the board call as reference images, and the product instruction is threaded through
+both the board prompt and every shot prompt. The panel is drawn with the real packaging,
+and the clip animates those pixels.
+
+**Hook variants** — the performance loop. The hook is beat 1, which is clip 1, so the
+body clips are rendered once and reused:
+
+```bash
+uv run ... ad hooks spec.json --count 6        # 6 takes of the opening beat
+```
+
+Six variants of a five-beat ad render **10 clips, not 30**. H3 has no seed, so
+re-submitting the same hook prompt returns a genuinely different performance — which is
+what a hook test wants. `--beat <id>` varies a different beat.
+
+**Voiceover** — mux a narration and an optional music bed onto a finished ad. The bed is
+ducked under speech with a sidechain compressor, and the voice is loudness-normalised to
+the same `I=-16:TP=-1.5:LRA=11` the `voice` command uses:
+
+```bash
+uv run ... ad voice ad.mp4 --voice vo.mp3 --music bed.mp3
+```
+
+**Captions and Arabic.** Text is never drawn by the image model — the compiled story
+always sets `allow_text: false`. Captions are rendered with Pillow and burned in with one
+ffmpeg pass, which is what makes correct Arabic possible: each line is wrapped first, then
+reshaped and bidi-reordered, so ligatures are never cut. A `.srt` is written alongside in
+**logical** order, because an SRT consumer does its own shaping.
+
+**Disclosure.** `"disclosure": true` burns an `AI-generated` mark at the top of the safe
+zone for the whole film (or pass your own string). EU AI Act Article 50 has required
+marking of synthetic media since 2026-08-02.
+
+`examples/ad-spec.json` is a complete working 30s spec.
+
 ## Voice Generation (ElevenLabs)
 
 ```bash

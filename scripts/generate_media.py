@@ -377,46 +377,18 @@ def cmd_image(args):
 
 # ─── TEXT OVERLAY ────────────────────────────────────────────
 
-# Font search paths (macOS + Linux)
-_ARABIC_FONT_PATHS = [
-    # User-installed Noto Sans Arabic (variable weight)
-    os.path.expanduser("~/Library/Fonts/NotoSansArabic[wdth,wght].ttf"),
-    os.path.expanduser("~/Library/Fonts/NotoSansArabic-Bold.ttf"),
-    # macOS system
-    "/System/Library/Fonts/GeezaPro.ttc",
-    "/System/Library/Fonts/Supplemental/Muna.ttc",
-    "/System/Library/Fonts/Supplemental/Damascus.ttc",
-    # Linux
-    "/usr/share/fonts/truetype/noto/NotoSansArabic-Bold.ttf",
-    "/usr/share/fonts/noto/NotoSansArabic-Bold.ttf",
-]
-
-_LATIN_FONT_PATHS = [
-    "/System/Library/Fonts/Helvetica.ttc",
-    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-    "/System/Library/Fonts/Supplemental/Impact.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
-]
-
-
-def _find_font(paths: list[str]) -> str | None:
-    for p in paths:
-        if os.path.exists(p):
-            return p
-    return None
-
-
-def _has_arabic(text: str) -> bool:
-    return bool(__import__("re").search(r"[\u0600-\u06FF]", text))
-
-
-def _reshape_arabic(text: str) -> str:
-    """Reshape Arabic text for correct rendering: connected letters + RTL."""
-    import arabic_reshaper
-    from bidi.algorithm import get_display
-    reshaped = arabic_reshaper.reshape(text)
-    return get_display(reshaped)
+# Font discovery and Arabic shaping now live in captions.py, which is the module that
+# does the hard version of this job (timed text, safe zones, per-line reshaping). Two
+# copies of a font search path is one copy too many — when a face is added for the video
+# captions, the still overlays must pick it up in the same change.
+sys.path.insert(0, str(Path(__file__).parent))
+from captions import (  # noqa: E402
+    ARABIC_FONT_PATHS as _ARABIC_FONT_PATHS,
+    LATIN_FONT_PATHS as _LATIN_FONT_PATHS,
+    find_font as _find_font,
+    has_arabic as _has_arabic,
+    reshape_arabic as _reshape_arabic,
+)
 
 
 def overlay_text_on_image(
@@ -1407,6 +1379,384 @@ def cmd_story_assemble(args):
 
 # ─── CLI ─────────────────────────────────────────────────────
 
+# ─── AD MODE ──────────────────────────────────────────────────
+#
+# An ad spec compiles DOWN into an ordinary story spec, which is then run through the
+# story machinery unchanged. That is the whole design: `ad` adds a format vocabulary, a
+# platform safe zone, a product that must stay on-model and burned-in text, and adds
+# nothing at all to the board/shots/assemble path that was already proven.
+
+def _load_ad(args):
+    """Load + compile an ad spec. Returns (adspec, spec, plan, spec_path, workdir)."""
+    sys.path.insert(0, str(Path(__file__).parent))
+    import adspec as ad
+
+    spec_path = Path(args.spec).expanduser().resolve()
+    if not spec_path.is_file():
+        print(f"Error: spec not found: {spec_path}", file=sys.stderr)
+        sys.exit(2)
+
+    try:
+        spec = ad.load_ad_spec(spec_path)
+        plan = ad.compile_to_story(spec)
+    except ad.AdSpecError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    for warning in plan["warnings"]:
+        print(f"Warning: {warning}", file=sys.stderr)
+
+    workdir = (
+        Path(args.workdir).expanduser().resolve() if args.workdir
+        else spec_path.parent / f"{spec_path.stem}-ad"
+    )
+
+    # The product instruction goes into the story's STYLE, not just the board prompt.
+    # storyboard threads style through both compile_board_prompt and compile_shot_prompt,
+    # and the label has to survive the video pass too — a panel that renders the packaging
+    # correctly is worth nothing if the clip animating it invents new lettering.
+    extra = ad.compile_board_prompt_extra(spec)
+    if extra:
+        base = (plan["story"].get("style") or "").rstrip()
+        if base and not base.endswith((".", "!", "?")):
+            base += "."
+        plan["story"]["style"] = " ".join(part for part in (base, extra) if part)
+
+    # Paths inside an ad spec are relative to the spec, but the compiled story lands in
+    # the workdir. Re-anchor them or the board call looks for cast refs that aren't there.
+    for name, ref in list((plan["story"].get("cast") or {}).items()):
+        resolved = (spec_path.parent / ref).resolve()
+        plan["story"]["cast"][name] = str(resolved)
+
+    return ad, spec, plan, spec_path, workdir
+
+
+def _write_compiled_story(plan, workdir) -> Path:
+    """Persist the compiled story so every story phase reads exactly one artifact — and
+    so the user can look at what their ad spec actually became."""
+    workdir.mkdir(parents=True, exist_ok=True)
+    story_path = workdir / "story.json"
+    story_path.write_text(json.dumps(plan["story"], indent=2, ensure_ascii=False) + "\n")
+    return story_path
+
+
+def _ad_story_args(args, story_path, workdir, **extra):
+    """A Namespace the existing cmd_story_* functions accept unchanged."""
+    import argparse as _argparse
+    shim = _argparse.Namespace(
+        spec=str(story_path), workdir=str(workdir),
+        model=getattr(args, "model", None), provider=getattr(args, "provider", None),
+        resolution=getattr(args, "resolution", None), only=getattr(args, "only", None),
+        yes=getattr(args, "yes", False), timeout=getattr(args, "timeout", 900),
+        output=getattr(args, "output", None),
+    )
+    for key, value in extra.items():
+        setattr(shim, key, value)
+    return shim
+
+
+def _ad_platform_size(plan):
+    """(width, height) the captions should be laid out for."""
+    safe = plan["safe"]
+    return safe["width"], safe["height"]
+
+
+def cmd_ad_plan(args):
+    """Dry run: the beat sheet, the compiled prompts, the cues and the total cost."""
+    ad, spec, plan, spec_path, workdir = _load_ad(args)
+    story_path = _write_compiled_story(plan, workdir)
+
+    print(f"\n=== {spec.get('title', spec_path.stem)} — {plan['format']} on "
+          f"{plan['platform']} ({plan['story']['aspect']}, "
+          f"{plan['total_duration']}s) ===\n", file=sys.stderr)
+    for beat in plan["beats"]:
+        print(f"  {beat['index'] + 1}. {beat['id']:<12} {beat['duration']:>2}s  "
+              f"{beat['start']:>5.1f} → {beat['end']:<5.1f}", file=sys.stderr)
+
+    safe = plan["safe"]
+    print(f"\n  safe box: {safe['box']} of {safe['width']}x{safe['height']} "
+          f"(top {safe['top']}px, right {safe['right']}px, bottom {safe['bottom']}px)",
+          file=sys.stderr)
+
+    if plan["cues"]:
+        print("\n=== BURNED TEXT ===", file=sys.stderr)
+        for cue in plan["cues"]:
+            print(f"  {cue['start']:>5.1f}-{cue['end']:<5.1f} {cue['role']:<11} "
+                  f"{cue['text']}", file=sys.stderr)
+
+    for claim in ad.check_claims(spec):
+        print(f"Warning: {claim}", file=sys.stderr)
+
+    story_args = _ad_story_args(args, story_path, workdir)
+    cmd_story_plan(story_args)
+
+
+def cmd_ad_preview(args):
+    """Render the safe-zone guide and every caption still — spends nothing.
+
+    This is the phase that pays for itself: text placed under the platform's UI is copy
+    nobody reads, and finding that out after paying for five clips is the expensive way.
+    """
+    sys.path.insert(0, str(Path(__file__).parent))
+    import captions as cap
+
+    ad, spec, plan, spec_path, workdir = _load_ad(args)
+    _write_compiled_story(plan, workdir)
+    width, height = _ad_platform_size(plan)
+
+    out_dir = workdir / "preview"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        cues = cap.parse_cues(plan["cues"])
+    except cap.CaptionError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    for warning in cap.overlaps(cues):
+        print(f"Warning: {warning}", file=sys.stderr)
+
+    guide = cap.safe_guide(width, height, plan["safe"], out_dir / "safe-zone.png")
+    rendered = cap.render_cues(cues, width, height, plan["safe"], out_dir)
+
+    srt_path = out_dir / "captions.srt"
+    srt_path.write_text(cap.srt_from_cues(cues), encoding="utf-8")
+
+    print(f"\nGuide:    {guide}", file=sys.stderr)
+    for item in rendered:
+        print(f"  {item['cue']['role']:<11} {item['png']}", file=sys.stderr)
+    print(f"Subtitles: {srt_path}\n", file=sys.stderr)
+
+    json.dump({
+        "guide": str(guide), "srt": str(srt_path),
+        "cues": [{"role": r["cue"]["role"], "start": r["cue"]["start"],
+                  "end": r["cue"]["end"], "png": str(r["png"])} for r in rendered],
+        "safe": {k: v for k, v in plan["safe"].items() if k != "box"} | {
+            "box": list(plan["safe"]["box"])},
+    }, sys.stdout, indent=2, ensure_ascii=False)
+    print()
+
+
+def cmd_ad_board(args):
+    ad, spec, plan, spec_path, workdir = _load_ad(args)
+    story_path = _write_compiled_story(plan, workdir)
+    cmd_story_board(_ad_story_args(args, story_path, workdir))
+
+
+def cmd_ad_shots(args):
+    ad, spec, plan, spec_path, workdir = _load_ad(args)
+    story_path = _write_compiled_story(plan, workdir)
+    cmd_story_shots(_ad_story_args(args, story_path, workdir))
+
+
+def cmd_ad_regenerate(args):
+    ad, spec, plan, spec_path, workdir = _load_ad(args)
+    story_path = _write_compiled_story(plan, workdir)
+    cmd_story_regenerate(_ad_story_args(args, story_path, workdir))
+
+
+def cmd_ad_assemble(args):
+    """Concatenate the clips, then burn the text unless --no-captions."""
+    sys.path.insert(0, str(Path(__file__).parent))
+    import captions as cap
+    import storyboard as sb
+
+    ad, spec, plan, spec_path, workdir = _load_ad(args)
+    story_path = _write_compiled_story(plan, workdir)
+
+    silent = workdir / f"{spec_path.stem}-silent.mp4"
+    cmd_story_assemble(_ad_story_args(args, story_path, workdir, output=str(silent)))
+
+    final = Path(args.output).expanduser() if args.output else \
+        workdir / f"{spec_path.stem}.mp4"
+
+    burn = plan["cues"] and not args.no_captions \
+        and (spec.get("captions") or {}).get("burn", True)
+    if not burn:
+        shutil_move = silent.replace(final)
+        print(f"\nFinal (no captions): {shutil_move}", file=sys.stderr)
+        json.dump({"output": str(final), "captions": False}, sys.stdout, indent=2)
+        print()
+        return
+
+    size = sb.probe_size(silent)
+    width, height = size if size else _ad_platform_size(plan)
+    # The safe box is fractional, so re-derive it at the clip's REAL size. A 768P draft
+    # and a 2K finish are the same ad; the insets are the same percentages of a
+    # different pixel count.
+    safe = ad.safe_zone(plan["platform"], width, height)
+
+    try:
+        cues = cap.parse_cues(plan["cues"])
+        cap.burn(silent, cues, final, width=width, height=height, safe=safe,
+                 work_dir=workdir / "captions")
+    except cap.CaptionError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    srt_path = final.with_suffix(".srt")
+    srt_path.write_text(cap.srt_from_cues(cues), encoding="utf-8")
+
+    print(f"\nFinal: {final}\nSubtitles: {srt_path}", file=sys.stderr)
+    json.dump({"output": str(final), "silent": str(silent), "srt": str(srt_path),
+               "captions": len(cues), "size": [width, height]},
+              sys.stdout, indent=2)
+    print()
+
+
+def cmd_ad_hooks(args):
+    """Render N alternate takes of the opening beat and assemble one ad per take.
+
+    The hook is the only thing that varies, so the body clips are rendered once and
+    reused by every variant: N variants of a five-beat ad cost `4 + N` clips, not `5N`.
+    H3 has no seed, so re-submitting the same hook prompt returns a genuinely different
+    performance — which is exactly what a hook test wants.
+    """
+    import video_providers as vp
+    sys.path.insert(0, str(Path(__file__).parent))
+    import admux as mx
+    import storyboard as sb
+
+    ad, spec, plan, spec_path, workdir = _load_ad(args)
+    story_path = _write_compiled_story(plan, workdir)
+    story_args = _ad_story_args(args, story_path, workdir)
+
+    story_spec = sb.load_spec(story_path)
+    entries = sb.clip_plan(story_spec)
+    clip_ids = [entry["id"] for entry in entries]
+
+    hook_index = 0
+    if args.beat:
+        if args.beat not in clip_ids:
+            print(f"Error: --beat {args.beat!r} is not a clip in this ad "
+                  f"(have: {', '.join(clip_ids)})", file=sys.stderr)
+            sys.exit(2)
+        hook_index = clip_ids.index(args.beat)
+
+    try:
+        vplan = mx.variant_plan(clip_ids, args.count, hook_index=hook_index)
+    except mx.MuxError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    clips_dir = workdir / "clips"
+    body = [clips_dir / sb.clip_filename(entries[i])
+            for i in range(len(entries)) if i != hook_index]
+    missing = [str(p) for p in body if not p.is_file()]
+    if missing:
+        print("Error: the body clips must exist before varying the hook: "
+              + ", ".join(missing) + "\n  Run `ad shots` first.", file=sys.stderr)
+        sys.exit(2)
+
+    requests, model_spec, provider_name, _ = _story_clip_requests(
+        sb, story_spec, _ad_story_args(args, story_path, workdir,
+                                       only=[clip_ids[hook_index]]), workdir)
+    if not requests:
+        print(f"Error: no clip request for beat {clip_ids[hook_index]!r}", file=sys.stderr)
+        sys.exit(2)
+    request = requests[0]
+
+    print(f"\n{args.count} take(s) of {clip_ids[hook_index]!r}; "
+          f"{len(body)} body clip(s) reused.\n"
+          f"  render {vplan['clips_to_render']} clips instead of "
+          f"{vplan['clips_if_naive']} — {vplan['clips_saved']} saved.",
+          file=sys.stderr)
+    _confirm_spend(request["cost"] * args.count,
+                   f"{args.count} hook take(s) via {provider_name}", args.yes)
+
+    try:
+        provider = vp.get_provider(provider_name)
+    except vp.VideoProviderError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    hooks_dir = clips_dir / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    made, failures = [], []
+
+    for variant in vplan["variants"]:
+        label = variant["id"]
+        print(f"\n[{variant['n']}/{args.count}] {label} "
+              f"({request['entry']['duration']}s, ~${request['cost']:.2f})",
+              file=sys.stderr)
+        try:
+            job_id = provider.submit(
+                request["request"], model_spec.backend_ids[provider_name],
+                model_spec.caps[provider_name],
+            )
+            print(f"  Job: {job_id}", file=sys.stderr)
+            state = vp.wait_for(provider, job_id, timeout=args.timeout)
+            video_bytes = provider.download(state["url"])
+        except vp.VideoProviderError as e:
+            print(f"  Failed: {e}", file=sys.stderr)
+            failures.append({"id": label, "error": str(e)})
+            continue
+
+        take = hooks_dir / f"{hook_index + 1:02d}-{label}.mp4"
+        take.write_bytes(video_bytes)
+        billed = state.get("cost")
+        _track_cost_usd(billed if billed is not None else request["cost"])
+
+        ordered = list(body)
+        ordered.insert(hook_index, take)
+        out = workdir / mx.variant_filename(spec_path.stem, label)
+        try:
+            mx.assemble_variant(ordered, out)
+        except mx.MuxError as e:
+            print(f"  Assembly failed: {e}", file=sys.stderr)
+            failures.append({"id": label, "error": str(e)})
+            continue
+
+        print(f"  Saved: {out}", file=sys.stderr)
+        record = {"id": label, "take": str(take), "file": str(out),
+                  "job_id": job_id, "sha256": sb.sha256_of(out),
+                  "timestamp": datetime.now().isoformat()}
+        made.append(record)
+        sb.merge_manifest(workdir, {"hook_variants": {label: record}})
+
+    _print_cost()
+    json.dump({"variants": made, "failed": failures,
+               "clips_saved": vplan["clips_saved"]}, sys.stdout, indent=2)
+    print()
+    if failures and not made:
+        sys.exit(1)
+
+
+def cmd_ad_voice(args):
+    """Mux a voiceover (and optional music bed) onto a finished ad."""
+    sys.path.insert(0, str(Path(__file__).parent))
+    import admux as mx
+
+    video = Path(args.video).expanduser().resolve()
+    if not video.is_file():
+        print(f"Error: video not found: {video}", file=sys.stderr)
+        sys.exit(2)
+
+    output = Path(args.output).expanduser() if args.output else \
+        video.with_name(f"{video.stem}-vo{video.suffix}")
+
+    try:
+        if args.music:
+            mx.mix_tracks(video, output,
+                          voice=Path(args.voice).expanduser() if args.voice else None,
+                          music=Path(args.music).expanduser(), duck=not args.no_duck)
+        else:
+            if not args.voice:
+                print("Error: pass --voice, --music, or both", file=sys.stderr)
+                sys.exit(2)
+            mx.mux_voice(video, Path(args.voice).expanduser(), output,
+                         normalize=not args.no_normalize,
+                         keep_original=args.keep_original)
+    except mx.MuxError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    print(f"\nSaved: {output}", file=sys.stderr)
+    json.dump({"output": str(output), "duration": mx.duration_of(output)},
+              sys.stdout, indent=2)
+    print()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate media assets: images, video clips, voiceovers",
@@ -1511,6 +1861,87 @@ def main():
         "assemble", help="Phase 4: concatenate the clips with ffmpeg"), video_flags=False)
     assemble_p.add_argument("--output", help="Output mp4 path")
     assemble_p.set_defaults(func=cmd_story_assemble)
+
+    # ── ad ──
+    advert = sub.add_parser(
+        "ad", help="Social video ads: named formats, platform safe zones, burned text"
+    )
+    ad_sub = advert.add_subparsers(dest="phase", required=True)
+
+    def _ad_common(parser_obj, *, video_flags=True):
+        parser_obj.add_argument("spec", help="Path to the ad JSON spec")
+        parser_obj.add_argument("--workdir", help="Where panels/clips live "
+                                                  "(default: <spec>-ad/)")
+        if video_flags:
+            parser_obj.add_argument("--model", choices=HTTP_VIDEO_MODELS,
+                                    help="Override the spec's model")
+            parser_obj.add_argument("--provider", choices=VIDEO_PROVIDERS,
+                                    help="Override the spec's provider")
+            parser_obj.add_argument("--resolution",
+                                    help="Override the spec's resolution (e.g. 768P)")
+            parser_obj.add_argument("--only", nargs="+", metavar="BEAT_ID",
+                                    help="Limit to these beat ids (re-roll a failure)")
+        return parser_obj
+
+    ad_plan_p = _ad_common(ad_sub.add_parser(
+        "plan", help="Dry run: beat sheet, prompts, burned text and total cost"))
+    ad_plan_p.set_defaults(func=cmd_ad_plan)
+
+    ad_prev_p = _ad_common(ad_sub.add_parser(
+        "preview", help="Render the safe-zone guide and caption stills — spends nothing"),
+        video_flags=False)
+    ad_prev_p.set_defaults(func=cmd_ad_preview)
+
+    ad_board_p = _ad_common(ad_sub.add_parser(
+        "board", help="Phase 1: one image call -> the panel grid"), video_flags=False)
+    ad_board_p.add_argument("--yes", "-y", action="store_true",
+                            help="Skip the spend confirmation")
+    ad_board_p.set_defaults(func=cmd_ad_board)
+
+    ad_shots_p = _ad_common(ad_sub.add_parser(
+        "shots", help="Phase 2: chain the panels into clips"))
+    ad_shots_p.add_argument("--timeout", type=int, default=900)
+    ad_shots_p.add_argument("--yes", "-y", action="store_true",
+                            help="Skip the spend confirmation")
+    ad_shots_p.set_defaults(func=cmd_ad_shots)
+
+    ad_hooks_p = _ad_common(ad_sub.add_parser(
+        "hooks", help="Render N alternate opening takes; body clips are reused"))
+    ad_hooks_p.add_argument("--count", type=int, default=3,
+                            help="How many alternate takes (default 3)")
+    ad_hooks_p.add_argument("--beat", help="Which beat varies (default: the first)")
+    ad_hooks_p.add_argument("--timeout", type=int, default=900)
+    ad_hooks_p.add_argument("--yes", "-y", action="store_true",
+                            help="Skip the spend confirmation")
+    ad_hooks_p.set_defaults(func=cmd_ad_hooks)
+
+    ad_regen_p = _ad_common(ad_sub.add_parser(
+        "regenerate", help="Promote approved 768P drafts to 2K (MiniMax direct only)"))
+    ad_regen_p.add_argument("--timeout", type=int, default=900)
+    ad_regen_p.add_argument("--yes", "-y", action="store_true",
+                            help="Skip the spend confirmation")
+    ad_regen_p.set_defaults(func=cmd_ad_regenerate)
+
+    ad_asm_p = _ad_common(ad_sub.add_parser(
+        "assemble", help="Concatenate the clips and burn the text"), video_flags=False)
+    ad_asm_p.add_argument("--output", help="Output mp4 path")
+    ad_asm_p.add_argument("--no-captions", action="store_true",
+                          help="Leave the film clean; still writes the .srt")
+    ad_asm_p.set_defaults(func=cmd_ad_assemble)
+
+    ad_voice_p = ad_sub.add_parser(
+        "voice", help="Mux a voiceover and/or a music bed onto a finished ad")
+    ad_voice_p.add_argument("video", help="The finished mp4")
+    ad_voice_p.add_argument("--voice", help="Voiceover audio file")
+    ad_voice_p.add_argument("--music", help="Music bed audio file")
+    ad_voice_p.add_argument("--output", help="Output mp4 path")
+    ad_voice_p.add_argument("--keep-original", action="store_true",
+                            help="Mix the clip audio under the voice instead of replacing it")
+    ad_voice_p.add_argument("--no-normalize", action="store_true",
+                            help="Skip loudness normalisation on the voice")
+    ad_voice_p.add_argument("--no-duck", action="store_true",
+                            help="Do not duck the music bed under speech")
+    ad_voice_p.set_defaults(func=cmd_ad_voice)
 
     # ── voice ──
     vox = sub.add_parser("voice", help="Generate voiceovers via ElevenLabs")

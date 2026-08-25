@@ -12,6 +12,7 @@
 <p>
   <a href="#quick-start">Quick start</a> ·
   <a href="#story-mode">Story mode</a> ·
+  <a href="#social-ads">Social ads</a> ·
   <a href="#video">Video</a> ·
   <a href="#arabic-text">Arabic text</a> ·
   <a href="#configuration">Configuration</a> ·
@@ -21,7 +22,8 @@
 </div>
 
 A [Claude Code](https://claude.com/claude-code) skill that generates images, video clips and
-voiceovers — and chains them into continuous multi-shot films from a single JSON shot list.
+voiceovers — and chains them into continuous multi-shot films, and platform-ready social
+ads, from a single JSON shot list.
 
 Say `/media` in Claude Code, or ask for a thumbnail, a voiceover, a product clip. The skill
 picks the command, the model and the cost tier.
@@ -126,6 +128,60 @@ list of shots each carrying what to draw, what happens, one camera move and its 
 [`examples/story-spec.json`](examples/story-spec.json) is a complete working spec — the film
 above came from it. [`references/hailuo-prompting.md`](references/hailuo-prompting.md)
 documents the prompt discipline the compiler encodes.
+
+---
+
+## Social ads
+
+An ad spec **compiles into a story spec**, so everything above runs unchanged. Ad mode
+adds the four things a story doesn't have: a named format, a platform safe zone, a product
+that has to stay on-model, and burned-in text.
+
+```bash
+uv run $S ad plan     spec.json   # beat sheet, prompts, cues, cost — spends nothing
+uv run $S ad preview  spec.json   # safe-zone guide + caption stills — spends nothing
+uv run $S ad board    spec.json   # one image call → the panel grid
+uv run $S ad shots    spec.json   # chain the panels into clips
+uv run $S ad assemble spec.json   # concat + burn the text
+```
+
+**Ten formats**, each supplying an ordered beat skeleton and a duration split:
+
+| | |
+|---|---|
+| **Actor-led** | `problem-solution` · `testimonial` · `unboxing` · `before-after` · `tutorial` |
+| **Faceless** | `hero-product` · `asmr` · `kinetic-text` · `explainer` · `hands-demo` |
+
+**The product problem, and where it's actually solved.** Video models can't hold a product
+on-model from text — ask for "a woman holding a bottle of X" and the label is invented. So
+the real packaging is composited into the *panel* at the image stage, and the video model
+animates pixels that already contain it. That's the same move story mode makes for
+character identity, pointed at a product.
+
+**Safe zones are not decoration.** TikTok covers the top 10%, right 10% and bottom 20% of
+the frame with its own UI. Text there is copy nobody reads. Every caption is laid out
+inside the safe box, and `ad preview` draws you the guide before you've spent anything.
+
+<div align="center">
+  <img src="docs/ad-frames.jpg" alt="Three frames from a generated ad: disclosure at top, hook centred, caption bottom — English and Arabic" width="100%">
+  <br>
+  <sub><b>The same 30-second ad in both languages.</b> AI image models cannot draw Arabic;
+  these captions are real type, wrapped then reshaped, burned in with one ffmpeg pass.</sub>
+</div>
+
+**Hook variants — the cheap part.** The hook is beat 1, which is clip 1, so the body is
+rendered once and reused:
+
+```bash
+uv run $S ad hooks spec.json --count 6
+```
+
+Six variants of a five-beat ad render **10 clips, not 30**. H3 has no seed, so the same
+prompt returns a genuinely different performance each time — exactly what a hook test wants.
+
+> [!NOTE]
+> `"disclosure": true` burns an `AI-generated` mark for the whole film. The EU AI Act's
+> Article 50 has required marking of synthetic media since 2 August 2026.
 
 ---
 
@@ -245,6 +301,8 @@ All output lands in `~/generated_media/` (override with `--output`), each file p
 | Video — Hailuo 3 768P→2K regeneration *(direct only)* | $0.05/s |
 | Voice — `v3` / `flash` | ~$0.30 / ~$0.15 per 1K chars |
 | **The film at the top** — 1 board + 3 clips at 2K | **~$2.46** |
+| **A 30s vertical ad** — 1 board + 5 clips at 768P | **~$2.52** |
+| **…plus 6 hook variants** | **+~$2.88** *(10 clips, not 30)* |
 
 > [!WARNING]
 > Video costs 10–50× an image. Every paid call prints its estimate and waits for confirmation;
