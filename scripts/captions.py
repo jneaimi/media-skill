@@ -482,9 +482,33 @@ def _draw_cue(img, cue: dict, width: int, height: int, safe: dict | None,
         # survive — losing the tail of a caption beats losing its first line.
         correction = box[1] - ink_top
 
-    if correction:
-        placements = [(x, y + correction, anchor, line,
-                       (bb[0], bb[1] + correction, bb[2], bb[3] + correction))
+    # The same correction is needed on the HORIZONTAL axis, and for the same reason one
+    # axis is not enough: wrap_text measures the LOGICAL string, but what gets drawn is
+    # the SHAPED one. Reshaping composes ligatures and substitutes presentation forms, so
+    # a shaped Arabic line does not measure what its logical source did — a line wrapped
+    # to fit `max_width` can be wider once shaped. Stroke and plate padding then push the
+    # ink out further still, and none of it is visible to the wrap. Measured on
+    # IBM Plex Sans Arabic: a two-line Arabic CTA on TikTok laid out inside max_width and
+    # rendered 30px past the safe box's right edge, straight under the Follow button.
+    ink_left = min(p[4][0] for p in placements) - plate
+    ink_right = max(p[4][2] for p in placements) + plate + inclusive
+
+    rtl = any(has_arabic(p[3]) for p in placements)
+    h_correction = 0.0
+    if ink_right > box[2]:
+        h_correction = box[2] - ink_right
+    elif ink_left < box[0]:
+        h_correction = box[0] - ink_left
+    if ink_left + h_correction < box[0] and not rtl:
+        # Wider than the safe box either way. Pin the READING START so the opening words
+        # survive — the left edge for Latin, and for Arabic the right edge, which
+        # h_correction already holds.
+        h_correction = box[0] - ink_left
+
+    if correction or h_correction:
+        placements = [(x + h_correction, y + correction, anchor, line,
+                       (bb[0] + h_correction, bb[1] + correction,
+                        bb[2] + h_correction, bb[3] + correction))
                       for x, y, anchor, line, bb in placements]
 
     if style["bg_color"]:
