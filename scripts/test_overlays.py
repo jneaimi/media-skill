@@ -864,5 +864,91 @@ class TestBurnIntegration(TmpDirMixin, unittest.TestCase):
         self.assertGreater(c2, c1 + 3.0)
 
 
+class TestAnimatedCombinationOrdering(TmpDirMixin, unittest.TestCase):
+    """Animated scale AND animated opacity together — the combination, not either alone.
+
+    geq addresses pixels by coordinate against the frame it is handed. Downstream of
+    `scale=...:eval=frame` its input changes size every frame, so it reads a stale plane:
+    observed on ffmpeg 8.1.1 as the correct badge PLUS a larger rectangle-clipped copy
+    offset down-right. Scale-only and fade-only both rendered clean, which is why the
+    per-property tests all passed and the ad was still visibly broken.
+    """
+
+    def _overlay(self, asset, **kw):
+        return ov.Overlay(asset=asset, start=0.5, end=3.0, anchor="center",
+                          scale=0.42, **kw)
+
+    def test_alpha_is_applied_before_any_animated_scale(self):
+        asset = self.dir / "badge.png"
+        ov.badge("50% OFF", asset, style="starburst")
+        o = self._overlay(asset, fade_in=0.25, fade_out=0.4,
+                          tracks=[ov.Track("scale",
+                                           [ov.Keyframe(0.5, 0.0), ov.Keyframe(1.0, 1.0)],
+                                           easing="back_out")])
+        chain = ov.overlay_filter(o, index=0, frame_w=768, frame_h=1376, safe=None,
+                                  fps=30, in_label="0:v", out_label="v")
+        self.assertIn("geq=", chain)
+        self.assertIn("eval=frame", chain)
+        self.assertLess(chain.index("geq="), chain.index("eval=frame"),
+                        "geq must precede the per-frame scale or it samples a stale plane")
+
+    def test_static_scale_still_emits_no_eval_frame(self):
+        asset = self.dir / "badge.png"
+        ov.badge("X", asset)
+        o = self._overlay(asset, fade_in=0.25)
+        chain = ov.overlay_filter(o, index=0, frame_w=768, frame_h=1376, safe=None,
+                                  fps=30, in_label="0:v", out_label="v")
+        self.assertNotIn("eval=frame", chain)
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"),
+                         "ffmpeg not installed")
+    def test_scale_and_fade_together_render_one_badge_not_two(self):
+        asset = self.dir / "badge.png"
+        ov.badge("50% OFF", asset, style="starburst", fill="#d4713a")
+        bg = self.dir / "bg.mp4"
+        subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                        "-f", "lavfi", "-i", "color=c=black:s=768x1376:r=30", "-t", "4",
+                        "-c:v", "libx264", "-pix_fmt", "yuv420p", str(bg)], check=True)
+        out = self.dir / "out.mp4"
+        o = self._overlay(asset, fade_in=0.25, fade_out=0.4,
+                          tracks=[ov.Track("scale",
+                                           [ov.Keyframe(0.5, 0.0), ov.Keyframe(1.0, 1.0)],
+                                           easing="back_out")])
+        ov.burn(bg, [o], out, safe=None)
+
+        # Mid-animation is where the stale plane showed. The corrupt render painted a
+        # SECOND copy offset down-right, so the discriminating question is not "how many
+        # blobs" (they touch, and an ink-run count scores the corrupt frame identically)
+        # but "is there ink outside where the badge can possibly be". Compute the badge's
+        # own bounding box for this frame and assert nothing is drawn beyond it.
+        t = 0.9
+        aw, ah = ov._asset_size(asset)
+        bw, bh = ov._scaled_size(o, t, 768, aw, ah)
+        bx, by = ov.resolve_position(o, t, frame_w=768, frame_h=1376,
+                                     asset_w=bw, asset_h=bh, safe=None)
+        frame = self.dir / "f.png"
+        subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                        "-ss", str(t), "-i", str(out), "-vframes", "1", str(frame)],
+                       check=True)
+        from PIL import Image
+        im = Image.open(frame).convert("L")
+        px = im.load()
+        pad = 4  # scaler edge softness
+        stray = [
+            (x, y)
+            for y in range(0, im.size[1], 3)
+            for x in range(0, im.size[0], 3)
+            if px[x, y] > 40
+            and not (bx - pad <= x <= bx + bw + pad and by - pad <= y <= by + bh + pad)
+        ]
+        self.assertEqual(
+            stray, [],
+            f"{len(stray)} lit pixels outside the badge box "
+            f"({bx},{by},{bx + bw},{by + bh}) — first at {stray[:3]}. "
+            "The animated-scale/animated-alpha ordering has regressed: geq is sampling "
+            "a stale plane and painting a second offset copy."
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -520,28 +520,21 @@ def overlay_filter(ov: Overlay, *, index: int, frame_w: int, frame_h: int,
     opacity_animated = _track_for(ov, "opacity") is not None or ov.fade_in > 0 or ov.fade_out > 0
 
     chain = []
-    if scale_track is not None:
-        times = _sample_times(ov.start, ov.end)
-        ws = [_scaled_size(ov, ts, frame_w, asset_w, asset_h)[0] for ts in times]
-        hs = [_scaled_size(ov, ts, frame_w, asset_w, asset_h)[1] for ts in times]
-        w_expr = _sampled_expr(ov, ws, "scale track (width)")
-        h_expr = _sampled_expr(ov, hs, "scale track (height)")
-        chain.append(f"scale=w='{w_expr}':h='{h_expr}':eval=frame")
-    else:
-        w, h = _scaled_size(ov, ov.start, frame_w, asset_w, asset_h)
-        chain.append(f"scale={w}:{h}")
 
-    if has_rotate:
-        cw, ch = _canvas_size(ov, ov.start, frame_w, frame_h, asset_w, asset_h)
-        if rot_track is not None:
-            times = _sample_times(ov.start, ov.end)
-            rads = [math.radians(sample(rot_track, ts)) for ts in times]
-            a_expr = _sampled_expr(ov, rads, "rotation track")
-        else:
-            a_expr = f"{math.radians(float(ov.rotation)):.6f}"
-        # c=none: rotate's default fill is opaque black, which would box the asset.
-        chain.append(f"rotate=a='{a_expr}':ow={cw}:oh={ch}:c=none")
-
+    # ALPHA FIRST, AND SIZE LAST — the order here is load-bearing, not stylistic.
+    #
+    # geq addresses pixels by coordinate (`alpha(X,Y)`) against the frame it is handed.
+    # Put it downstream of `scale=...:eval=frame` and its input changes dimensions on
+    # every frame, so it reads a stale plane and paints garbage. Observed on ffmpeg 8.1.1:
+    # a badge with a back_out scale track AND a fade rendered the correct starburst plus a
+    # second, larger, rectangle-clipped copy offset down-right. Either animation alone was
+    # clean, which is exactly why per-property tests could not see it — only the
+    # combination corrupts, and only when composited over real footage.
+    #
+    # Multiplying alpha is size-independent, so doing it on the un-scaled asset is
+    # equivalent and safe. `overlay` itself handles a second input whose size varies per
+    # frame without complaint (verified: scale-track-only renders correctly), so scale is
+    # the right thing to leave until last.
     if opacity_animated:
         times = _sample_times(ov.start, ov.end)
         alphas = [_opacity_at(ov, ts) for ts in times]
@@ -554,6 +547,28 @@ def overlay_filter(ov: Overlay, *, index: int, frame_w: int, frame_h: int,
         )
     elif float(ov.opacity) < 1.0:
         chain.append(f"colorchannelmixer=aa={float(ov.opacity):.4f}")
+
+    if has_rotate:
+        cw, ch = _canvas_size(ov, ov.start, frame_w, frame_h, asset_w, asset_h)
+        if rot_track is not None:
+            times = _sample_times(ov.start, ov.end)
+            rads = [math.radians(sample(rot_track, ts)) for ts in times]
+            a_expr = _sampled_expr(ov, rads, "rotation track")
+        else:
+            a_expr = f"{math.radians(float(ov.rotation)):.6f}"
+        # c=none: rotate's default fill is opaque black, which would box the asset.
+        chain.append(f"rotate=a='{a_expr}':ow={cw}:oh={ch}:c=none")
+
+    if scale_track is not None:
+        times = _sample_times(ov.start, ov.end)
+        ws = [_scaled_size(ov, ts, frame_w, asset_w, asset_h)[0] for ts in times]
+        hs = [_scaled_size(ov, ts, frame_w, asset_w, asset_h)[1] for ts in times]
+        w_expr = _sampled_expr(ov, ws, "scale track (width)")
+        h_expr = _sampled_expr(ov, hs, "scale track (height)")
+        chain.append(f"scale=w='{w_expr}':h='{h_expr}':eval=frame")
+    else:
+        w, h = _scaled_size(ov, ov.start, frame_w, asset_w, asset_h)
+        chain.append(f"scale={w}:{h}")
 
     enable = f"enable='between(t,{ov.start:.3f},{ov.end:.3f})'"
     if animated:
