@@ -88,6 +88,19 @@ uv run $S story shots    spec.json   # chain the panels into clips
 uv run $S story assemble spec.json   # ffmpeg concat → final film
 ```
 
+**The cheap loop** (MiniMax direct only): draft every clip at 768P, keep what works, then
+re-render only the keepers at 2K. Regeneration reuses the original result rather than
+generating afresh, so the take you approved is the take you get — H3 has no seed, so a
+plain re-submit at 2K would hand you a *different performance*.
+
+```bash
+uv run $S story shots      spec.json --provider minimax --resolution 768P   # $0.48/6s
+uv run $S story regenerate spec.json                                        # $0.30/6s
+```
+
+Drafts are moved to `clips/drafts/` rather than overwritten. A keeper costs the same as
+going straight to 2K ($0.78 for 6s); a **reject costs $0.48 instead of $0.78**.
+
 A `manifest.json` records a sha256 of the spec, the board, every panel and every clip as it
 goes, so a failure on clip 6 never loses clips 1–5. Re-roll a single shot with
 `story shots spec.json --only <id>`.
@@ -229,6 +242,7 @@ All output lands in `~/generated_media/` (override with `--output`), each file p
 | Image — `flash` / `pro` | ~$0.04 / ~$0.12 |
 | Video — Veo `fast` / `standard` | ~$0.15/s / ~$0.40/s |
 | Video — Hailuo 3 at 2K / 768P | $0.13/s / $0.08/s |
+| Video — Hailuo 3 768P→2K regeneration *(direct only)* | $0.05/s |
 | Voice — `v3` / `flash` | ~$0.30 / ~$0.15 per 1K chars |
 | **The film at the top** — 1 board + 3 clips at 2K | **~$2.46** |
 

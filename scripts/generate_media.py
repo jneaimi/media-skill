@@ -1031,7 +1031,10 @@ def _story_clip_requests(sb, spec, args, workdir):
             prompt=sb.compile_shot_prompt(entry, spec),
             duration=entry["duration"],
             aspect_ratio=spec.get("aspect"),
-            resolution=spec.get("resolution") or caps.default_resolution,
+            # CLI override first: the whole point of the 768P tier is drafting a spec
+            # written for 2K without maintaining a second copy of it.
+            resolution=(getattr(args, "resolution", None) or spec.get("resolution")
+                        or caps.default_resolution),
             first_frame=str(first),
             last_frame=str(last) if last else None,
             generate_audio=caps.audio,
@@ -1265,6 +1268,109 @@ def cmd_story_shots(args):
         sys.exit(1)
 
 
+def cmd_story_regenerate(args):
+    """Promote approved 768P drafts to 2K, reusing each draft rather than re-rolling it."""
+    import video_providers as vp
+
+    sb, spec, spec_path, workdir = _load_story(args)
+    manifest_path = workdir / "manifest.json"
+    if not manifest_path.exists():
+        print(f"Error: no manifest at {manifest_path} — run `story shots` first",
+              file=sys.stderr)
+        sys.exit(2)
+
+    recorded = (json.loads(manifest_path.read_text()).get("clips") or {})
+    wanted = set(args.only) if args.only else None
+
+    eligible, skipped = [], []
+    for entry in sb.clip_plan(spec):
+        clip_id = entry["id"]
+        if wanted and clip_id not in wanted:
+            continue
+        record = recorded.get(clip_id)
+        if not record:
+            skipped.append((clip_id, "not generated yet"))
+        elif record.get("provider") != "minimax":
+            skipped.append((clip_id, f"came from {record.get('provider')}; regeneration "
+                                     "is MiniMax-direct only"))
+        elif record.get("resolution") == "2K":
+            skipped.append((clip_id, "already 2K"))
+        elif not record.get("job_id"):
+            skipped.append((clip_id, "no source task id recorded"))
+        else:
+            eligible.append((entry, record))
+
+    for clip_id, why in skipped:
+        print(f"Skipping {clip_id}: {why}", file=sys.stderr)
+    if not eligible:
+        print("Error: nothing eligible to regenerate.", file=sys.stderr)
+        sys.exit(1)
+
+    total = sum(vp.MINIMAX_REGEN_PRICE * e["duration"] for e, _ in eligible)
+    _confirm_spend(total, f"{len(eligible)} clip(s) re-rendered 768P → 2K", args.yes)
+
+    try:
+        provider = vp.get_provider("minimax")
+    except vp.VideoProviderError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    clips_dir = workdir / "clips"
+    drafts_dir = clips_dir / "drafts"
+    drafts_dir.mkdir(parents=True, exist_ok=True)
+
+    promoted, failures = [], []
+    for position, (entry, record) in enumerate(eligible, 1):
+        estimate = vp.MINIMAX_REGEN_PRICE * entry["duration"]
+        print(f"\n[{position}/{len(eligible)}] {entry['id']} "
+              f"({entry['duration']}s, ~${estimate:.2f})", file=sys.stderr)
+
+        try:
+            task_id = provider.regenerate(record["job_id"], resolution="2K")
+            print(f"  Task: {task_id}", file=sys.stderr)
+            state = vp.wait_for(provider, task_id, timeout=args.timeout)
+            video_bytes = provider.download(state["url"])
+        except vp.VideoProviderError as e:
+            print(f"  Failed: {e}", file=sys.stderr)
+            failures.append({"id": entry["id"], "error": str(e)})
+            continue
+
+        clip_path = clips_dir / sb.clip_filename(entry)
+        # Keep the draft: it is the thing that was approved, and the 2K render is only
+        # trustworthy insofar as it matches it.
+        if clip_path.exists():
+            clip_path.replace(drafts_dir / clip_path.name)
+        clip_path.write_bytes(video_bytes)
+        print(f"  Saved: {clip_path}  (draft kept in {drafts_dir.name}/)", file=sys.stderr)
+
+        billed = state.get("cost")
+        _track_cost_usd(billed if billed is not None else estimate)
+
+        updated = dict(record)
+        updated.update({
+            "resolution": "2K",
+            "sha256": sb.sha256_of(clip_path),
+            "regenerated_from": record["job_id"],
+            "job_id": task_id,
+            "draft_file": str(drafts_dir / clip_path.name),
+            "draft_cost": record.get("billed_cost"),
+            "estimated_cost": round(estimate, 4),
+            "billed_cost": billed,
+            "timestamp": datetime.now().isoformat(),
+        })
+        sb.merge_manifest(workdir, {"clips": {entry["id"]: updated}})
+        promoted.append(updated)
+
+    _print_cost()
+    if failures:
+        print(f"\n{len(failures)} failed; retry with "
+              f"--only {' '.join(f['id'] for f in failures)}", file=sys.stderr)
+    json.dump({"regenerated": promoted, "failed": failures}, sys.stdout, indent=2)
+    print()
+    if failures and not promoted:
+        sys.exit(1)
+
+
 def cmd_story_assemble(args):
     """Phase 3: concatenate the clips in shot order."""
     sb, spec, spec_path, workdir = _load_story(args)
@@ -1369,6 +1475,9 @@ def main():
                                     help="Override the spec's model")
             parser_obj.add_argument("--provider", choices=VIDEO_PROVIDERS,
                                     help="Override the spec's provider")
+            parser_obj.add_argument("--resolution",
+                                    help="Override the spec's resolution (e.g. 768P to "
+                                         "draft a 2K spec cheaply)")
             parser_obj.add_argument("--only", nargs="+", metavar="SHOT_ID",
                                     help="Limit to these shot ids (re-roll a failure)")
         return parser_obj
@@ -1391,8 +1500,15 @@ def main():
                          help="Skip the spend confirmation")
     shots_p.set_defaults(func=cmd_story_shots)
 
+    regen_p = _story_common(story_sub.add_parser(
+        "regenerate", help="Promote approved 768P drafts to 2K (MiniMax direct only)"))
+    regen_p.add_argument("--timeout", type=int, default=900)
+    regen_p.add_argument("--yes", "-y", action="store_true",
+                         help="Skip the spend confirmation")
+    regen_p.set_defaults(func=cmd_story_regenerate)
+
     assemble_p = _story_common(story_sub.add_parser(
-        "assemble", help="Phase 3: concatenate the clips with ffmpeg"), video_flags=False)
+        "assemble", help="Phase 4: concatenate the clips with ffmpeg"), video_flags=False)
     assemble_p.add_argument("--output", help="Output mp4 path")
     assemble_p.set_defaults(func=cmd_story_assemble)
 

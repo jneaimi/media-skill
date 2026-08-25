@@ -488,8 +488,32 @@ def merge_manifest(workdir: Path, updates: dict) -> dict:
 
 # ─── ASSEMBLY ────────────────────────────────────────────────
 
+def probe_size(path: Path) -> tuple[int, int] | None:
+    """(width, height) of a clip's video stream, or None if ffprobe can't say."""
+    if shutil.which("ffprobe") is None:
+        return None
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", str(path)],
+        capture_output=True, text=True,
+    )
+    try:
+        width, height = result.stdout.strip().splitlines()[0].split("x")
+        return int(width), int(height)
+    except (ValueError, IndexError):
+        return None
+
+
 def assemble(clips: list[Path], output: Path) -> Path:
-    """Concatenate clips losslessly with ffmpeg's concat demuxer."""
+    """Concatenate clips with ffmpeg's concat demuxer.
+
+    Stream-copies when every clip shares one frame size — lossless and instant. Falls back
+    to a re-encode when they don't, because `-c copy` cannot reconcile mismatched
+    dimensions: it writes the first clip's size into the container header and lets the
+    later segments disagree with it, producing a file that decodes without error but plays
+    wrong. H3 does this in practice — regenerating a 1376x768 draft returned 2592x1440 for
+    two clips and 2560x1440 for a third.
+    """
     if not clips:
         raise StorySpecError("no clips to assemble — run `story shots` first")
 
@@ -513,9 +537,33 @@ def assemble(clips: list[Path], output: Path) -> Path:
                 for c in clips)
     )
 
+    sizes = {c: probe_size(c) for c in clips}
+    known = {s for s in sizes.values() if s}
+    uniform = len(known) <= 1
+
+    if uniform:
+        codec_args = ["-c", "copy"]
+    else:
+        # Normalise to the largest frame, padding rather than stretching so nothing is
+        # distorted by a few pixels of aspect drift.
+        target = max(known, key=lambda wh: wh[0] * wh[1])
+        odd = {str(c.name): f"{s[0]}x{s[1]}" for c, s in sizes.items() if s and s != target}
+        print(
+            f"Warning: clips differ in size — {', '.join(f'{k} is {v}' for k, v in odd.items())}"
+            f". Re-encoding everything to {target[0]}x{target[1]} (stream copy would "
+            f"produce a file that plays wrong).",
+            file=sys.stderr,
+        )
+        width, height = target
+        codec_args = [
+            "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                   f"pad={width}:{height}:-1:-1:color=black,setsar=1",
+            "-c:v", "libx264", "-crf", "17", "-preset", "medium", "-c:a", "aac", "-b:a", "192k",
+        ]
+
     result = subprocess.run(
         ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(list_file),
-         "-c", "copy", str(output)],
+         *codec_args, str(output)],
         capture_output=True, text=True,
     )
     if result.returncode != 0:

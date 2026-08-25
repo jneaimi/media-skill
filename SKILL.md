@@ -123,8 +123,17 @@ uv run $S story plan     spec.json          # dry run: every prompt + total cost
 uv run $S story board    spec.json          # 1 image call → contact sheet → sliced panels
 uv run $S story shots    spec.json          # chain the panels into clips (cost-gated)
 uv run $S story shots    spec.json --only desk turn   # re-roll just these shots
+uv run $S story regenerate spec.json        # 768P drafts → 2K, same take (MiniMax only)
 uv run $S story assemble spec.json          # ffmpeg concat → final mp4
 ```
+
+`regenerate` re-renders an approved 768P draft at 2K by reusing the original result
+(`$0.05/s`), not by re-prompting. H3 has no seed, so re-submitting would return a different
+take. Drafts move to `clips/drafts/`. Direct-only; OpenRouter does not expose it.
+
+`assemble` stream-copies when clips share a frame size and re-encodes when they don't —
+regeneration can return 2592x1440 and 2560x1440 in the same batch, and `-c copy` would
+write one size into the header and let a segment disagree with it.
 
 Phases are separate so you approve between them, and `manifest.json` records a sha256 of
 the spec, the sheet, every panel and every clip as it goes — a crash on clip 6 never loses

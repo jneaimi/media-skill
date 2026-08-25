@@ -74,6 +74,11 @@ class ModelSpec:
 _H3_RATIOS = ("21:9", "16:9", "4:3", "1:1", "3:4", "9:16")
 _H3_PRICE = {"2K": 0.13, "768P": 0.08}
 
+# 768P -> 2K re-render, MiniMax direct only. Cheaper than generating at 2K because it
+# reuses the original result rather than starting over.
+MINIMAX_REGEN_PRICE = 0.05
+REGEN_WINDOW_DAYS = 7
+
 MODEL_REGISTRY: dict[str, ModelSpec] = {
     # ── Gemini/Veo direct — the original path, unchanged behavior ──
     "fast": ModelSpec(
@@ -509,6 +514,34 @@ class MiniMaxProvider(Provider):
 
         return {"status": RUNNING, "url": None, "error": None, "cost": None}
 
+    def regenerate(self, source_task_id: str, resolution: str = "2K") -> str:
+        """Re-render an existing 768P task at 2K, direct-only.
+
+        This is NOT the same as re-submitting the prompt at a higher resolution. H3 has no
+        seed, so a fresh submit returns a different take — different blocking, different
+        performance. Regeneration feeds the original result plus its context back through
+        the model, so what you approved at 768P is what you get at 2K. It is the only
+        reason the cheap draft tier is useful rather than merely cheap.
+        """
+        payload = {
+            "model": "MiniMax-H3",
+            "source_task_id": source_task_id,
+            "resolution": resolution,
+        }
+        response = _http_json(
+            "POST", f"{MINIMAX_BASE}/video_regeneration", self.token, payload
+        )
+        task_id = response.get("task_id")
+        if not task_id:
+            base = response.get("base_resp") or {}
+            detail = base.get("status_msg") or response
+            raise VideoProviderError(
+                f"MiniMax regeneration did not return a task_id: {detail}\n"
+                "  The source task must be your own, 768P, in 'succeeded' state, and "
+                "created within the last 7 days — regeneration cannot revive an old draft."
+            )
+        return task_id
+
     def download(self, url: str) -> bytes:
         # content.url is a plain CDN link — sending our API key to it would leak the
         # credential to a third-party host for no benefit.
@@ -523,8 +556,10 @@ def _minimax_cost(task: dict) -> float | None:
     seconds = usage.get("total_seconds")
     if seconds is None:
         return None
-    resolution = task.get("resolution")
-    per_second = _H3_PRICE.get(resolution)
+    # Regeneration is billed at its own rate, not the output resolution's rate.
+    if task.get("task_type") == "regeneration":
+        return round(MINIMAX_REGEN_PRICE * seconds, 4)
+    per_second = _H3_PRICE.get(task.get("resolution"))
     if per_second is None:
         return None
     return round(per_second * seconds, 4)

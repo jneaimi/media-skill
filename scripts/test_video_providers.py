@@ -327,6 +327,45 @@ class TestMiniMax(unittest.TestCase):
         self.assertEqual(state["status"], vp.FAILED)
         self.assertIn("1026", state["error"])
 
+    def test_regenerate_payload(self):
+        sent = []
+        with mock.patch.object(vp.urllib.request, "urlopen",
+                               capture_request(sent, fake_json_response({"task_id": "regen-1"}))):
+            task_id = self.provider.regenerate("task-9")
+        payload = json.loads(sent[0].data.decode())
+        self.assertEqual(task_id, "regen-1")
+        self.assertEqual(sent[0].full_url, f"{vp.MINIMAX_BASE}/video_regeneration")
+        self.assertEqual(payload, {"model": "MiniMax-H3",
+                                   "source_task_id": "task-9", "resolution": "2K"})
+
+    def test_regenerate_failure_explains_the_7_day_window(self):
+        response = fake_json_response(
+            {"base_resp": {"status_code": 2013, "status_msg": "source task not found"}})
+        with mock.patch.object(vp.urllib.request, "urlopen",
+                               capture_request([], response)):
+            with self.assertRaises(vp.VideoProviderError) as ctx:
+                self.provider.regenerate("task-9")
+        message = str(ctx.exception)
+        self.assertIn("source task not found", message)
+        self.assertIn("7 days", message)
+
+    def test_regeneration_is_billed_at_its_own_rate(self):
+        # Same 6 seconds: $0.05/s as a regeneration, not the 2K output rate of $0.13/s.
+        state = self._poll({
+            "status": "succeeded", "content": {"url": "https://cdn/o.mp4"},
+            "resolution": "2K", "task_type": "regeneration",
+            "usage": {"total_seconds": 6},
+        })
+        self.assertAlmostEqual(state["cost"], 0.30)
+
+    def test_plain_generation_still_prices_by_resolution(self):
+        state = self._poll({
+            "status": "succeeded", "content": {"url": "https://cdn/o.mp4"},
+            "resolution": "2K", "task_type": "generation",
+            "usage": {"total_seconds": 6},
+        })
+        self.assertAlmostEqual(state["cost"], 0.78)
+
     def test_download_does_not_leak_the_key_to_the_cdn(self):
         sent = []
         with mock.patch.object(vp.urllib.request, "urlopen",
@@ -656,6 +695,45 @@ class TestAssemble(unittest.TestCase):
         with self.assertRaises(sb.StorySpecError) as ctx:
             sb.assemble([self.tmp / "01-s1.mp4"], self.tmp / "out.mp4")
         self.assertIn("01-s1.mp4", str(ctx.exception))
+
+    def _fake_clips(self, n=2):
+        out = []
+        for i in range(n):
+            c = self.tmp / f"0{i+1}-s{i}.mp4"
+            c.write_bytes(b"fake")
+            out.append(c)
+        return out
+
+    def _run_assemble(self, sizes):
+        """Assemble with probe_size stubbed; returns the ffmpeg argv actually used."""
+        clips = self._fake_clips(len(sizes))
+        captured = {}
+        def fake_run(argv, **kw):
+            captured["argv"] = argv
+            class R: returncode = 0; stderr = ""
+            return R()
+        with mock.patch.object(sb, "probe_size", side_effect=lambda c: sizes[clips.index(c)]), \
+             mock.patch.object(sb.shutil, "which", return_value="/usr/bin/ffmpeg"), \
+             mock.patch.object(sb.subprocess, "run", fake_run):
+            sb.assemble(clips, self.tmp / "out.mp4")
+        return captured["argv"]
+
+    def test_uniform_sizes_stream_copy(self):
+        argv = self._run_assemble([(2592, 1440), (2592, 1440)])
+        self.assertIn("copy", argv)
+        self.assertNotIn("libx264", argv)
+
+    def test_mismatched_sizes_force_a_reencode_to_the_largest(self):
+        # H3 really does this: regenerating a batch returned 2592x1440 and 2560x1440.
+        # -c copy would write one size into the header and let a segment disagree.
+        argv = self._run_assemble([(2592, 1440), (2560, 1440)])
+        self.assertIn("libx264", argv)
+        self.assertNotIn("copy", argv)
+        self.assertTrue(any("scale=2592:1440" in a for a in argv if isinstance(a, str)))
+
+    def test_unprobeable_clips_fall_back_to_stream_copy(self):
+        argv = self._run_assemble([None, None])
+        self.assertIn("copy", argv)
 
     def test_missing_ffmpeg_is_actionable(self):
         clip = self.tmp / "01-s1.mp4"
