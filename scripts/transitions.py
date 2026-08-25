@@ -298,7 +298,9 @@ def validate(clips: list[Clip]) -> list[str]:
             if probe[0] != base[0]:
                 problems.append(
                     f"clip index {index} size {probe[0][0]}x{probe[0][1]} differs from clip "
-                    f"index {base_index} size {base[0][0]}x{base[0][1]}; use storyboard.fit_aspect"
+                    f"index {base_index} size {base[0][0]}x{base[0][1]} — it will be scaled "
+                    "and centre-cropped to match, losing the edges. Normalise the panels "
+                    "with storyboard.fit_aspect to keep them."
                 )
             if abs(probe[1] - base[1]) > 0.001:
                 problems.append(
@@ -320,8 +322,55 @@ def _audio_enabled(clips: list[Clip], requested: bool) -> bool:
     return enabled
 
 
+def _normalise_filters(clips: list[Clip]) -> tuple[list[str], dict[int, str]]:
+    """Scale-and-crop every clip to the first one's size, when they disagree.
+
+    xfade does not merely prefer matching dimensions — it refuses:
+    "First input link main parameters (size 768x1376) do not match ... (size 768x1216)".
+    Concatenation tolerates a mismatch by re-encoding, so a spec that assembled fine with
+    hard cuts would fail the moment a transition was added, which is a bad trade for the
+    user. H3 really does return four different heights across one five-shot ad, so this is
+    the normal case, not the pathological one.
+
+    Cropped, never padded, matching storyboard.fit_aspect: padding puts black bars inside
+    the frame and the transition then animates them as part of the picture.
+
+    FRAME RATE IS PART OF THIS, and it is the half that is easy to miss. xfade also
+    rejects mismatched timebases — "First input link main timebase (1/12288) do not match
+    ... (1/15360)" — which is a different error from the size one and fires even when
+    every clip is the same size. It shows up the moment an effect re-encodes one clip at a
+    different rate from its source, so the effects stage can introduce it into footage
+    that was previously uniform. When anything differs, every input is put through the
+    same scale/crop/fps/settb so the whole chain is uniform by construction.
+    """
+    probed = [_probe_video(clip.path) for clip in clips]
+    sizes = [entry[0] if entry else None for entry in probed]
+    rates = [entry[1] if entry else None for entry in probed]
+    target = next((size for size in sizes if size), None)
+    rate = next((r for r in rates if r), None)
+    if target is None:
+        return [], {}
+    sizes_differ = any(size is not None and size != target for size in sizes)
+    rates_differ = rate is not None and any(
+        r is not None and abs(r - rate) > 0.001 for r in rates)
+    if not sizes_differ and not rates_differ:
+        return [], {}
+    width, height = target
+    filters, labels = [], {}
+    for index in range(len(clips)):
+        label = f"n{index}"
+        chain = (f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+                 f"crop={width}:{height},setsar=1")
+        if rates_differ:
+            chain += f",fps={rate:g},settb=AVTB"
+        filters.append(f"[{index}:v]{chain}[{label}]")
+        labels[index] = label
+    return filters, labels
+
+
 def chain_filter(clips: list[Clip], *, audio: bool = True,
-                 video_label: str = "vout", audio_label: str = "aout") -> str:
+                 video_label: str = "vout", audio_label: str = "aout",
+                 normalise: bool = True) -> str:
     """Build the filter_complex body for the whole transition chain."""
     _require_chain(clips)
     with_audio = _audio_enabled(clips, audio)
@@ -332,8 +381,10 @@ def chain_filter(clips: list[Clip], *, audio: bool = True,
         return ";".join(filters)
 
     filters: list[str] = []
+    fixups, relabel = _normalise_filters(clips) if normalise else ([], {})
+    filters.extend(fixups)
     elapsed = clips[0].duration
-    video_in = "0:v"
+    video_in = relabel.get(0, "0:v")
     audio_in = "0:a"
     for index, clip in enumerate(clips[1:], 1):
         transition = clip.transition
@@ -342,7 +393,7 @@ def chain_filter(clips: list[Clip], *, audio: bool = True,
         next_video = video_label if last else f"v{index - 1}{index}"
         offset = elapsed - transition.duration
         filters.append(
-            f"[{video_in}][{index}:v]xfade={transition.args()}:"
+            f"[{video_in}][{relabel.get(index, f'{index}:v')}]xfade={transition.args()}:"
             f"duration={transition.duration:g}:offset={offset:g}[{next_video}]"
         )
         if with_audio:

@@ -383,5 +383,72 @@ class FullSweepTests(unittest.TestCase):
             self.assertEqual(failures, [])
 
 
+class TestSizeNormalisation(unittest.TestCase):
+    """xfade REFUSES mismatched sizes where concat merely re-encodes them.
+
+    H3 returns four different heights across one five-shot ad, so a spec that assembled
+    fine with hard cuts would break the moment a transition was added. The chain scales
+    and centre-crops to the first clip's size instead — cropped, never padded, because
+    padding puts black bars inside the frame and the transition animates them.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+
+    def _clip(self, name, w, h, seconds=2):
+        path = self.dir / name
+        subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                        "-f", "lavfi", "-i", f"testsrc2=s={w}x{h}:r=30",
+                        "-t", str(seconds), "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                        str(path)], check=True)
+        return path
+
+    def test_matching_sizes_emit_no_normalisation(self):
+        clips = [tr.Clip(path=Path("a.mp4"), duration=2.0),
+                 tr.Clip(path=Path("b.mp4"), duration=2.0,
+                                  transition=tr.resolve("fade", 0.4))]
+        chain = tr.chain_filter(clips, audio=False, normalise=False)
+        self.assertNotIn("force_original_aspect_ratio", chain)
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"),
+                         "ffmpeg not installed")
+    def test_mismatched_sizes_render_instead_of_failing(self):
+        a = self._clip("a.mp4", 384, 640)
+        b = self._clip("b.mp4", 384, 560)
+        c = self._clip("c.mp4", 384, 600)
+        clips = [
+            tr.Clip(path=a, duration=tr.measure(a)),
+            tr.Clip(path=b, duration=tr.measure(b),
+                             transition=tr.resolve("fade", 0.4)),
+            tr.Clip(path=c, duration=tr.measure(c),
+                             transition=tr.resolve("circleopen", 0.3)),
+        ]
+        self.assertTrue(any("differs" in p for p in tr.validate(clips)))
+        out = self.dir / "out.mp4"
+        tr.render(clips, out, audio=False)
+        self.assertAlmostEqual(tr.measure(out),
+                               tr.total_duration(clips), delta=0.1)
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v",
+             "-show_entries", "stream=width,height", "-of", "csv=p=0", str(out)],
+            capture_output=True, text=True).stdout.strip()
+        self.assertEqual(probe.rstrip(","), "384,640")
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"),
+                         "ffmpeg not installed")
+    def test_normalise_false_still_fails_loudly(self):
+        a = self._clip("a.mp4", 384, 640)
+        b = self._clip("b.mp4", 384, 560)
+        clips = [
+            tr.Clip(path=a, duration=tr.measure(a)),
+            tr.Clip(path=b, duration=tr.measure(b),
+                             transition=tr.resolve("fade", 0.4)),
+        ]
+        chain = tr.chain_filter(clips, audio=False, normalise=False)
+        self.assertNotIn("force_original_aspect_ratio", chain)
+
+
 if __name__ == "__main__":
     unittest.main()
