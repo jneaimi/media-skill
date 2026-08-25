@@ -56,7 +56,9 @@ class TestParseCues(unittest.TestCase):
         self.assertEqual(by_role["hook"]["position"], "center")
         self.assertEqual(by_role["caption"]["position"], "bottom")
         self.assertEqual(by_role["cta"]["position"], "center")
-        self.assertEqual(by_role["disclosure"]["position"], [0.5, 0.965])
+        # Top, not bottom: an always-on disclosure anchored bottom draws through every
+        # bottom-anchored caption.
+        self.assertEqual(by_role["disclosure"]["position"], [0.5, 0.04])
         self.assertEqual(by_role["lower_third"]["position"], "bottom")
         self.assertTrue(all(c["style"] == "bold" for c in cues))
         self.assertTrue(all(isinstance(c["start"], float) for c in cues))
@@ -183,6 +185,32 @@ class TestOverlaps(unittest.TestCase):
         warns = cap.overlaps(cues)
         self.assertEqual(len(warns), 1)
         self.assertIn("caption", warns[0])
+
+    def test_disclosure_does_not_collide_with_bottom_captions(self):
+        """The defect this check exists for: a full-length disclosure over bottom
+        captions rendered one string through the other, and a role-only overlap check
+        called it clean."""
+        cues = cap.parse_cues([
+            {"start": 0, "end": 30, "text": "AI-generated", "role": "disclosure"},
+            {"start": 6, "end": 12, "text": "It was the light."},
+        ])
+        self.assertEqual(cap.overlaps(cues), [])
+
+    def test_same_band_different_role_warned(self):
+        cues = cap.parse_cues([
+            {"start": 0, "end": 30, "text": "AI-generated", "role": "disclosure",
+             "position": "bottom"},
+            {"start": 6, "end": 12, "text": "It was the light."},
+        ])
+        warns = cap.overlaps(cues)
+        self.assertEqual(len(warns), 1)
+        self.assertIn("bottom band", warns[0])
+
+    def test_band_buckets(self):
+        self.assertEqual(cap._band("bottom"), "bottom")
+        self.assertEqual(cap._band([0.5, 0.04]), "top")
+        self.assertEqual(cap._band([0.5, 0.5]), "center")
+        self.assertEqual(cap._band([0.5, 0.95]), "bottom")
 
     def test_different_role_overlap_ignored(self):
         cues = cap.parse_cues([
@@ -542,6 +570,70 @@ class BurnTests(unittest.TestCase):
         cues = cap.parse_cues([{"start": 0, "end": 1, "text": "x"}])
         with self.assertRaises(cap.CaptionError):
             cap.burn(bogus, cues, self.dir / "out.mp4")
+
+
+@unittest.skipUnless(HAVE_PIL, "Pillow not installed")
+class SafeBoxSweep(unittest.TestCase):
+    """Every platform x role x style x script must render inside the safe box.
+
+    Two real defects were found by rendering rather than by reasoning, and both were
+    invisible to a single happy-path check:
+
+    * A single line of ARABIC anchored to the bottom overshot by 28px, because placement
+      used the nominal `font_size * line_spacing` while ي/ن descenders drop past it. Two
+      lines of the same string fitted, since the second line's spacing absorbed the
+      descender — so the failing case was the one that looked safest.
+    * Every `plate` style overshot by exactly 1px, because Pillow's rounded_rectangle
+      paints its bottom coordinate inclusively.
+
+    Text outside this box is covered by the platform's own UI, so an overflow is not a
+    cosmetic issue: it is copy the viewer never sees.
+    """
+
+    PLATFORMS = ("tiktok", "reels", "shorts", "feed", "youtube")
+    SAMPLES = (
+        ("latin_one_line", "It was the light."),
+        ("latin_two_line", "It was the light and nothing else at all in this whole room"),
+        ("arabic_one_line", "ظننت أنني بحاجة إلى مزيد من القهوة"),
+        ("arabic_two_line", "ظننت أنني بحاجة إلى مزيد من القهوة ولكن المشكلة كانت في الإضاءة"),
+        ("mixed", "Halo — ظننت أنني بحاجة"),
+    )
+    COMBOS = (("hook", "bold"), ("caption", "bold"), ("caption", "plate"),
+              ("cta", "cta"), ("disclosure", "subtle"))
+
+    def _sweep(self, samples):
+        import adspec
+
+        checked = 0
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            for platform in self.PLATFORMS:
+                safe = adspec.safe_zone(platform)
+                left, top, right, bottom = safe["box"]
+                for role, style in self.COMBOS:
+                    for name, text in samples:
+                        cue = cap.parse_cues([{"start": 0, "end": 3, "text": text,
+                                               "role": role, "style": style}])[0]
+                        png = cap.render_cue_png(
+                            cue, safe["width"], safe["height"], safe,
+                            out / f"{platform}-{role}-{style}-{name}.png")
+                        ink = alpha_bbox(png)
+                        checked += 1
+                        self.assertIsNotNone(ink, f"{platform}/{role}/{style}/{name} drew nothing")
+                        self.assertGreaterEqual(ink[0], left, f"{platform}/{role}/{style}/{name} left")
+                        self.assertGreaterEqual(ink[1], top, f"{platform}/{role}/{style}/{name} top")
+                        self.assertLessEqual(ink[2], right, f"{platform}/{role}/{style}/{name} right")
+                        self.assertLessEqual(ink[3], bottom, f"{platform}/{role}/{style}/{name} bottom")
+        return checked
+
+    def test_latin_combinations_stay_inside_the_safe_box(self):
+        latin = [s for s in self.SAMPLES if not cap.has_arabic(s[1])]
+        self.assertEqual(self._sweep(latin), 50)
+
+    @unittest.skipUnless(HAVE_RESHAPER, "arabic-reshaper/python-bidi not installed")
+    def test_arabic_combinations_stay_inside_the_safe_box(self):
+        arabic = [s for s in self.SAMPLES if cap.has_arabic(s[1])]
+        self.assertEqual(self._sweep(arabic), 75)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "kind": "ad",
+  "title": "desk-light",
+  "format": "problem-solution",
+  "platform": "tiktok",
+  "duration": 30,
+  "model": "hailuo-3",
+  "provider": "minimax",
+  "resolution": "768P",
+
+  "style": "warm handheld lifestyle footage, shallow depth of field, practical lamplight, muted teal and amber palette, no on-screen text",
+
+  "product": {
+    "name": "the Halo desk lamp",
+    "refs": ["../cast/refs/style-01.jpg"],
+    "palette": "brushed aluminium and warm amber",
+    "claims": ["adjusts to the light in the room"],
+    "banned_claims": ["cures", "guaranteed", "medical", "clinically proven"]
+  },
+
+  "actor": { "name": "Sara", "ref": "../cast/refs/ref-sara.jpg" },
+
+  "beats": [
+    {
+      "id": "hook",
+      "panel": "close on Sara at a dim desk at night, squinting at a laptop, one hand shielding her eyes from the screen glare",
+      "action": "Sara pushes back from the desk and rubs her eyes",
+      "camera": "slow push in",
+      "say": "I thought I just needed more coffee.",
+      "caption": "I thought I just needed more coffee.",
+      "sound": { "ambience": "a quiet flat at night, a fridge humming two rooms away", "music": "N/A" }
+    },
+    {
+      "id": "problem",
+      "panel": "wide of the same desk, the only light a hard white ceiling bulb throwing a sharp shadow across the keyboard",
+      "action": "Sara tilts the laptop screen back and forth, hunting for an angle that does not glare",
+      "camera": "locked static shot",
+      "caption": "It was the light.",
+      "sound": { "ambience": "the room tone, one chair creak", "music": "a low sustained synth note entering" }
+    },
+    {
+      "id": "solution",
+      "panel": "medium shot, Sara's hand reaching into frame to set the Halo desk lamp beside the laptop, its shade angled down over the keyboard",
+      "action": "Sara sets the lamp down and turns it on; warm light spreads across the desk",
+      "camera": "slow arc shot",
+      "say": "One lamp. That was it.",
+      "caption": "One lamp. That was it.",
+      "sound": { "ambience": "a soft click, the room tone opening up", "music": "the synth resolving warm" }
+    },
+    {
+      "id": "proof",
+      "panel": "over-the-shoulder, the laptop screen now readable, the glare gone, Sara's face lit warm from the side instead of blue from the front",
+      "action": "Sara leans back in, relaxed, and starts typing steadily",
+      "camera": "slow push in",
+      "caption": "No glare. No squinting.",
+      "sound": { "ambience": "steady, unhurried typing", "music": "the warm bed continuing" }
+    },
+    {
+      "id": "cta",
+      "panel": "the Halo desk lamp alone on the cleared desk, lit warm against the dark room, the laptop closed beside it",
+      "action": "the camera settles as the room light dims around the lamp",
+      "camera": "crane down",
+      "sound": { "ambience": "the flat quiet again", "music": "the bed fading out" }
+    }
+  ],
+
+  "captions": { "style": "bold", "burn": true },
+
+  "cta": {
+    "text": "Halo desk lamp — link in bio",
+    "panel": "the Halo desk lamp alone on the cleared desk, held still, warm against the dark"
+  },
+
+  "disclosure": true,
+
+  "board": { "cols": 3, "rows": 2, "image_model": "pro", "size": "4K" }
+}

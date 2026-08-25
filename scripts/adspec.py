@@ -319,7 +319,7 @@ def compile_to_story(spec: dict) -> dict:
         final = resolved[-1]; cues.append({"start": final["start"], "end": final["end"], "text": cta["text"], "role": "cta", "position": "center", "style": captions.get("style", "bold")})
     disclosure = spec.get("disclosure")
     if disclosure:
-        cues.append({"start": 0.0, "end": float(spec["duration"]), "text": disclosure if isinstance(disclosure, str) else DISCLOSURE_DEFAULT, "role": "disclosure", "position": [0.5, .965], "style": captions.get("style", "bold")})
+        cues.append({"start": 0.0, "end": float(spec["duration"]), "text": disclosure if isinstance(disclosure, str) else DISCLOSURE_DEFAULT, "role": "disclosure", "position": [0.5, 0.04], "style": captions.get("style", "bold")})
     return {"story": story, "cues": cues, "beats": resolved, "safe": safe_zone(spec["platform"]), "platform": spec["platform"], "format": spec["format"], "total_duration": spec["duration"], "warnings": warnings}
 
 
@@ -327,7 +327,7 @@ def compile_board_prompt_extra(spec: dict) -> str:
     product = spec.get("product") or {}
     if not product.get("refs"): return ""
     name = product.get("name", "the product")
-    text = (f"The product shown in the reference photographs is {name}. Reproduce it exactly as photographed in every cell it appears in: identical shape, proportions, colour, finish, and the exact label artwork and lettering. Do not redesign the packaging, do not invent or translate any wording on it, and do not substitute a similar product.")
+    text = (f"The product shown in the reference photographs is {name}. Reproduce it exactly as photographed wherever it appears: identical shape, proportions, colour, finish, and the exact label artwork and lettering. Do not redesign the packaging, do not invent or translate any wording on it, and do not substitute a similar product.")
     if product.get("palette"): text += f" Keep the surrounding palette anchored to {product['palette']}."
     return text
 

@@ -67,15 +67,29 @@ _ARABIC_RE = re.compile("[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]")
 
 CUE_ROLES = ("hook", "caption", "cta", "disclosure", "lower_third")
 
-# Where a cue sits when it doesn't say. Disclosure defaults to a point in FRAME
-# coordinates (see CONTRACT.md) — near the bottom edge; render clamps it into the box.
+# Where a cue sits when it doesn't say. A point is in FRAME coordinates (see
+# CONTRACT.md); render clamps it into the safe box.
+#
+# The disclosure sits at the TOP, not the bottom. It was at the bottom, and because it
+# runs for the whole film it collided with every bottom-anchored caption — both clamp to
+# the same edge of the safe box, so "It was the light." rendered straight through
+# "AI-generated". Nothing caught it: overlaps() compares roles, and these are different
+# roles that happen to want the same pixels. Top is also where Meta and TikTok put their
+# own AI labels, so it reads as a label rather than as a caption.
 DEFAULT_POSITION = {
     "hook": "center",
     "caption": "bottom",
     "cta": "center",
-    "disclosure": [0.5, 0.965],
+    "disclosure": [0.5, 0.04],
     "lower_third": "bottom",
 }
+
+# Which vertical band a position resolves to, for collision warnings. A point is bucketed
+# by where it falls in the frame.
+def _band(position) -> str:
+    if isinstance(position, str):
+        return position
+    return "top" if position[1] < 0.34 else ("center" if position[1] < 0.67 else "bottom")
 
 
 class CaptionError(Exception):
@@ -277,9 +291,14 @@ def parse_cues(cues: list[dict]) -> list[dict]:
 
 
 def overlaps(cues: list[dict]) -> list[str]:
-    """Soft warnings for cues of the SAME role that overlap in time. Different roles may
-    share the screen (a disclosure under a caption is normal); the same role twice is a
-    spec mistake the caller should hear about without being hard-failed."""
+    """Soft warnings for cues that would share the screen.
+
+    Two kinds, because checking only the first missed a real collision. Same ROLE
+    overlapping in time is a spec mistake. But different roles collide too when they
+    resolve to the same vertical band — an always-on disclosure anchored bottom rendered
+    straight through every bottom caption, and a role-only check called that fine. What
+    matters is the pixels, so compare the band as well as the role.
+    """
     warnings = []
     for role in CUE_ROLES:
         group = sorted((c for c in cues if c.get("role") == role), key=lambda c: c["start"])
@@ -289,6 +308,24 @@ def overlaps(cues: list[dict]) -> list[str]:
                     f"cues with role {role!r} overlap: "
                     f"[{prev['start']:.3f}, {prev['end']:.3f}) and "
                     f"[{curr['start']:.3f}, {curr['end']:.3f})"
+                )
+
+    ordered = sorted(cues, key=lambda c: (c["start"], c["end"]))
+    for index, first in enumerate(ordered):
+        for second in ordered[index + 1:]:
+            if second["start"] >= first["end"]:
+                break
+            if first.get("role") == second.get("role"):
+                continue  # already reported above
+            band_a = _band(first.get("position") or DEFAULT_POSITION[first.get("role", "caption")])
+            band_b = _band(second.get("position") or DEFAULT_POSITION[second.get("role", "caption")])
+            if band_a == band_b:
+                warnings.append(
+                    f"{first.get('role', 'caption')!r} and {second.get('role', 'caption')!r} "
+                    f"both sit in the {band_a} band and overlap in time "
+                    f"([{first['start']:.3f}, {first['end']:.3f}) vs "
+                    f"[{second['start']:.3f}, {second['end']:.3f})) — they will draw over "
+                    f"each other. Move one with an explicit `position`."
                 )
     return warnings
 
@@ -419,6 +456,36 @@ def _draw_cue(img, cue: dict, width: int, height: int, safe: dict | None,
         bbox = draw.textbbox((x, y), line, font=font, anchor=anchor,
                              stroke_width=stroke_width)
         placements.append((x, y, anchor, line, bbox))
+
+    # `block_h` is NOMINAL — font_size * line_spacing per line. Real ink can exceed it,
+    # and for Arabic it reliably does: descenders on ي/ن/ج drop well past the line box
+    # that a Latin face fits inside. Measured on IBM Plex Sans Arabic at 105px, a single
+    # bottom-anchored line overshot the safe box by 28px while the same string over two
+    # lines fitted, because the second line's spacing absorbed the descender. Placing on
+    # the nominal height therefore pushes text under the platform's UI exactly in the
+    # case that looks safest. So: measure what was actually laid out, and correct.
+    # The plate is drawn with rounded_rectangle, which paints its bottom/right coordinate
+    # INCLUSIVELY — so a plate whose bottom sits exactly on the box edge colours the edge
+    # pixel and lands one row outside. Count that pixel here rather than shrinking the
+    # plate, or every plated caption sits 1px under the platform's UI.
+    plate = padding if style["bg_color"] else 0
+    inclusive = 1 if style["bg_color"] else 0
+    ink_top = min(p[4][1] for p in placements) - plate
+    ink_bottom = max(p[4][3] for p in placements) + plate + inclusive
+
+    correction = 0.0
+    if ink_bottom > box[3]:
+        correction = box[3] - ink_bottom
+    if ink_top + correction < box[1]:
+        # Pulling it back down would push the bottom out again; a block genuinely taller
+        # than the safe box cannot fit either way. Pin to the top so the opening words
+        # survive — losing the tail of a caption beats losing its first line.
+        correction = box[1] - ink_top
+
+    if correction:
+        placements = [(x, y + correction, anchor, line,
+                       (bb[0], bb[1] + correction, bb[2], bb[3] + correction))
+                      for x, y, anchor, line, bb in placements]
 
     if style["bg_color"]:
         # ONE rounded plate behind the whole block — not one per line, or the ragged

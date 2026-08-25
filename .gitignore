@@ -4,8 +4,9 @@ __pycache__/
 .venv/
 *.egg-info/
 
-# story working directories — generated boards, panels, clips and manifests
+# story and ad working directories — generated boards, panels, clips and manifests
 examples/*-story/
+examples/*-ad/
 
 # Finder-compressed working folders
 *.zip
