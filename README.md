@@ -185,6 +185,114 @@ prompt returns a genuinely different performance each time — exactly what a ho
 
 ---
 
+## Motion — transitions, effects, overlays
+
+Everything here is ffmpeg compositing. It costs nothing to render and nothing per run, so
+it is the cheapest part of an ad to iterate on.
+
+```bash
+uv run $S ad motion                 # what THIS ffmpeg can actually do
+uv run $S ad motion --kind gl       # just the GL ports
+```
+
+### Transitions
+
+`spec.transition` sets the default cut; any beat can override it.
+
+```json
+"transition": { "type": "fade", "duration": 0.35 },
+"beats": [
+  { "id": "solution",
+    "transition": { "type": "GL_DOORWAY", "duration": 0.5, "easing": "cubic-in-out" } }
+]
+```
+
+Two catalogues, both resolved against your installed ffmpeg:
+
+| Source | Count | Cost |
+|---|---|---|
+| **Native `xfade`** | 59 | threaded, fast — the default path |
+| **Vendored expressions** | 106, of which 50 are [GL Transitions](https://gl-transitions.com) ports | needs `-filter_complex_threads 1` |
+| **Easings** | 43 (Penner, plus squareroot/cuberoot/flipelastic/flipback) | applies to any of the 106 |
+
+Naming an `easing` forces the expression path, because a native transition cannot be
+eased — silently ignoring it would hand you a linear fade you did not ask for.
+
+The expressions are vendored from [`scriptituk/xfade-easing`](https://github.com/scriptituk/xfade-easing)
+(MIT) as plain FFmpeg strings, so **no custom ffmpeg build is required**. That is why this
+was chosen over `ffmpeg-gl-transition`, which needs FFmpeg compiled with `--enable-opengl`
+plus GLEW and glfw — not something a skill can ask of the person installing it.
+
+> [!IMPORTANT]
+> `xfade` **overlaps** its inputs rather than inserting between them, so every transition
+> removes its own duration from the film. Four 0.35s cuts make a 30s ad 28.6s. Captions are
+> re-timed for this automatically; the plan prints the total it will lose.
+
+### Effects
+
+Ten within-clip effects, authored per beat:
+
+`flash` · `zoom_punch` · `shake` · `glitch` · `whip_blur` · `ken_burns` · `speed_ramp` ·
+`vignette_pulse` · `color_pop` · `freeze_frame`
+
+```json
+{ "id": "proof",
+  "effects": [{ "name": "zoom_punch", "at": 0.4, "duration": 0.6, "scale": 1.14 }] }
+```
+
+An effect with `at` is a moment and is rebased onto whichever clip contains it. An effect
+without one is a treatment of the whole shot and applies to every clip of the beat.
+`fps` is always overridden with the clip's measured rate — `zoompan` re-times to a wrong
+one instead of resampling, which silently shortens the clip.
+
+### Graphic overlays
+
+Badges, arrows, plates and bars, animated with keyframe tracks over ten easing curves and
+clamped into the platform safe box.
+
+```json
+"overlays": [
+  { "badge": "50% OFF", "style": "starburst", "beat": "cta",
+    "anchor": "center", "offset": [0.0, -0.22], "scale": 0.40,
+    "fade_in": 0.25, "fade_out": 0.4,
+    "tracks": [{ "prop": "scale", "easing": "back_out",
+                 "keys": [{ "t": 26.0, "value": 0.0 },
+                          { "t": 26.45, "value": 1.0 }] }] }
+]
+```
+
+`beat: "<id>"` anchors an overlay to that beat's window, so it stays attached to its shot
+when the allocation shifts. Graphics composite **before** captions, so the words are always
+on top. Two overlays sharing pixels in the same time window produce a warning.
+
+### Multi-clip beats
+
+One clip is capped at the model's maximum (15s for H3). A beat that needs longer names
+several panels and is rendered as that many clips:
+
+```json
+{ "id": "solution", "duration": 20,
+  "panels": ["hands setting the lamp down beside the laptop",
+             "the same desk moments later, warm light filling the frame"],
+  "actions": ["she tilts the shade over the keyboard",
+              "the light spreads and she eases back"] }
+```
+
+That is not only a way past the cap — it is what makes the longer beat worth its seconds.
+The chain bridges panel *i* to panel *i+1*, so two panels is a shot that travels somewhere;
+one panel stretched to 20s is a video model inventing 20 seconds of unaided motion, which
+is exactly where H3 drifts.
+
+> [!NOTE]
+> **Clips inside one beat never get a transition.** They are bridge cuts — clip *i* ends on
+> the frame clip *i+1* opens on — so a cross-dissolve there blends a frame with itself,
+> costing runtime and showing nothing. A transition marks a deliberate discontinuity, and
+> inside a beat there isn't one.
+
+Skip any layer with `--no-transitions`, `--no-effects`, `--no-overlays`.
+
+---
+
 ## Video
 
 `--model` picks the model, `--provider` picks who serves it. Veo runs through the Gemini SDK;

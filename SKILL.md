@@ -218,6 +218,83 @@ zone for the whole film (or pass your own string). EU AI Act Article 50 has requ
 marking of synthetic media since 2026-08-02.
 
 `examples/ad-spec.json` is a complete working 30s spec.
+`examples/ad-motion.json` is the same ad with transitions, effects and an overlay.
+
+## Motion — transitions, effects, overlays
+
+All ffmpeg compositing: no API cost, no per-run cost. Run `ad motion` to print what the
+installed ffmpeg can actually do — the catalogue is build-dependent in both directions.
+
+**Transitions.** `spec.transition` is the default cut; a beat's own `transition` overrides
+it and attaches to the cut INTO that beat, so the first beat rejects one.
+
+```json
+"transition": {"type": "fade", "duration": 0.35}
+"beats": [{"id": "solution",
+           "transition": {"type": "GL_DOORWAY", "duration": 0.5, "easing": "cubic-in-out"}}]
+```
+
+59 native `xfade` transitions (fast, threaded) plus 106 vendored expressions — 50 of them
+GL Transitions ports — and 43 easings. The expressions are plain FFmpeg strings from
+`scriptituk/xfade-easing` (MIT, in `vendor/`), so **no custom ffmpeg build is needed**;
+they cost `-filter_complex_threads 1`, which is added automatically. Naming an `easing`
+forces the expression path, because a native transition cannot be eased. 16 vendored
+records are `NATIVE` sentinels for a patched build and are excluded — `GL_CROSSZOOM` is
+one, despite appearing in upstream's docs.
+
+**`xfade` overlaps rather than inserts**, so each transition shortens the film by its own
+duration. `retime_cues` accounts for it; without that, four 0.35s cuts leave every caption
+1.4s late by the end.
+
+**Effects.** Ten, per beat: `flash` `zoom_punch` `shake` `glitch` `whip_blur` `ken_burns`
+`speed_ramp` `vignette_pulse` `color_pop` `freeze_frame`.
+
+```json
+{"id": "proof", "effects": [{"name": "zoom_punch", "at": 0.4, "duration": 0.6, "scale": 1.14}]}
+```
+
+An effect with `at` is a moment, rebased onto whichever clip contains it; one without is a
+treatment of the whole shot. **Never pass `fps` from the spec** — the pipeline overrides it
+with the clip's measured rate, because `zoompan` re-times to a wrong rate instead of
+resampling and silently shortens the clip.
+
+Three ffmpeg 8.1.1 facts the effects work around: `zoompan`/`crop`/`loop` advertise
+`enable=` and reject it ("Not yet implemented"); `gblur`'s sigma is a constant, not an
+expression; and `zoompan` truncates its crop window to whole source pixels, so it stutters
+unless the input is upscaled first and eased with a cosine.
+
+**Overlays.** Badges, arrows, plates, bars — Pillow-rendered, keyframe-animated, clamped
+into the safe box, composited **before** captions so words stay on top.
+
+```json
+"overlays": [{"badge": "50% OFF", "style": "starburst", "beat": "cta",
+              "anchor": "center", "offset": [0.0, -0.22], "scale": 0.40,
+              "fade_in": 0.25, "fade_out": 0.4,
+              "tracks": [{"prop": "scale", "easing": "back_out",
+                          "keys": [{"t": 26.0, "value": 0.0},
+                                   {"t": 26.45, "value": 1.0}]}]}]
+```
+
+`beat: "<id>"` anchors to that beat's window. `colorchannelmixer`'s `aa` takes constant
+doubles only on this build, so animated alpha goes through `geq` — and `geq` must run
+BEFORE any per-frame scale, or it samples a stale plane. An animated scale also rides a
+constant transparent canvas, because `overlay` negotiates its input link once and
+`scale=eval=frame` never renegotiates it.
+
+**Multi-clip beats.** One clip is capped at the model's max (15s for H3). `panels: [...]`
+makes a beat that many clips and splits its seconds across them:
+
+```json
+{"id": "solution", "duration": 20,
+ "panels": ["hands setting the lamp down", "the same desk moments later, warm light filling it"],
+ "actions": ["she tilts the shade over the keyboard", "the light spreads and she eases back"]}
+```
+
+**Clips inside one beat never get a transition.** They are bridge cuts — clip *i* ends on
+the frame clip *i+1* opens on — so a dissolve there blends a frame with itself. A
+transition marks a deliberate discontinuity; inside a beat there isn't one.
+
+Skip any layer with `--no-transitions`, `--no-effects`, `--no-overlays`.
 
 ## Voice Generation (ElevenLabs)
 
