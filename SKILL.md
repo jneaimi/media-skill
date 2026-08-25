@@ -296,15 +296,19 @@ spec before running Act B.
 
 ### Act B — production (the phased chain)
 
+Both chains run this, so the phase is written `{story,ad}`; rows marked *ad only* have no
+story equivalent.
+
 | # | Fires | Put on screen first | Ask | Modes |
 |---|---|---|---|---|
-| B1 Plan | after `ad plan` | the beat sheet + cost line | approve / re-time / re-word | Guided; Direction if est. > $5 |
-| B2 Layout | after `ad preview` | safe-zone guide + caption stills | approve / move the text / change platform | Guided |
-| **B3 Board** | after `ad board` | `board.png` and the sliced panels | **approve / re-roll the sheet / adjust the prompt** | **all but headless** |
-| **B4 Tier** | before `ad shots` | the cost table | provider · model · 768P draft vs 2K | **all but headless** |
-| B5 Rushes | after `ad shots` | a $0 rough cut (below) | approve / re-roll a beat / hook variants | Direction, Guided |
-| B6 Motion | before `ad assemble` | `ad motion` catalogue | transitions + effects / clean cuts | Guided |
-| B7 Sound | after `ad assemble` | the mp4 | voiceover / music bed / silent | Guided |
+| B1 Plan | after `{story,ad} plan` | the shot/beat sheet + cost line | approve / re-time / re-word | Guided; Direction if est. > $5 |
+| B2 Layout | after `ad preview` — *ad only* | safe-zone guide + caption stills | approve / move the text / change platform | Guided |
+| **B3 Board** | after `{story,ad} board` | `board.png` and the sliced panels | **approve / re-roll the sheet / adjust the prompt** | **all but headless** |
+| **B4 Tier** | before `{story,ad} shots` | the cost table | provider · model · **768P draft vs 2K** | **all but headless** |
+| B5 Rushes | after `{story,ad} shots` | a $0 rough cut (below) | approve / re-roll a shot / hook variants | Direction, Guided |
+| **B6 Promote** | before `{story,ad} regenerate` | the rushes, with the keepers marked | **which drafts go to 2K** | **all but headless** |
+| B7 Motion | before `ad assemble` — *ad only* | `ad motion` catalogue | transitions + effects / clean cuts | Guided |
+| B8 Sound | after `{story,ad} assemble` | the mp4 | voiceover / music bed / silent | Guided |
 
 **B3 is where the two acts meet.** The board is the first time the mood and the cast appear
 together in the actual shots, so it is both the last cheap look at the direction and the gate
@@ -316,6 +320,15 @@ exist — the honest option is re-rolling the sheet, which is cheap enough not t
 well-drawn but the wrong world is an A2 problem, and re-rolling the sheet will keep
 producing the same wrong world at $0.12 a time.
 
+**B4 and B6 are one decision split across the shoot.** Keepers cost the same at either tier;
+only rejects differ, and on a chain there will be rejects. So B4 should default to 768P
+direct — $0.48 for a 6s H3 draft against $0.78 at 2K — and B6 then pays the 2K price only
+for the shots that survived B5. `regenerate` reuses the original result rather than
+re-prompting, so a promoted clip is the same take the user approved, not a new roll of it.
+Offering B4 without B6 is what makes the draft tier look like a quality compromise instead
+of the cheaper path to the same film. Note it is MiniMax-direct only; on Veo or OpenRouter
+there is no draft tier and both gates collapse into B4.
+
 **B5's artifact is free.** Assemble a rough cut with everything switched off — pure ffmpeg,
 no API call:
 
@@ -325,11 +338,15 @@ uv run $S ad assemble spec.json --no-captions --no-transitions --no-effects \
 ```
 
 Review the rushes there, spend on `--only <beat>` re-rolls if needed, and only then do the
-motion work.
+motion work. On the story path `story assemble` is already a plain concat, so it *is* the
+rough cut — no flags to switch off.
 
-**Story mode runs the same gates** minus A4, B2, B6 and B7, which are ad-only phases. Act A
-matters *more* for a story than for an ad, not less — a multi-shot film lives or dies on
-whether the cast and the world hold across every panel.
+**Story mode runs the same gates** minus A4, B2 and B7 — product refs, the safe-zone preview
+and the motion layer are ad-only phases. `story assemble` is a plain concat, so a story film
+that wants transitions or burned captions has to be authored as an ad; there is no
+`--transitions` flag on the story path to offer at a gate. Act A matters *more* for a story
+than for an ad, not less — a multi-shot film lives or dies on whether the cast and the world
+hold across every panel.
 
 ### Running a gate
 
