@@ -344,5 +344,244 @@ class TestBoardAspect(unittest.TestCase):
                     self.assertIn(chosen, storyboard.SUPPORTED_ASPECTS)
 
 
+# ─── MULTI-CLIP BEATS ────────────────────────────────────────
+
+class TestMultiClipBeats(unittest.TestCase):
+    def _spec(self, panels=2, duration=20):
+        spec = spec_for("problem-solution")
+        beat = spec["beats"][2]
+        beat.pop("panel")
+        beat["panels"] = [f"panel part {i}" for i in range(panels)]
+        beat["duration"] = duration
+        spec["duration"] = 16 + duration
+        return spec
+
+    def test_panels_expand_into_one_shot_each(self):
+        plan = adspec.compile_to_story(self._spec())
+        ids = [s["id"] for s in plan["story"]["shots"]]
+        self.assertIn("solution", ids)
+        self.assertIn("solution_2", ids)
+
+    def test_beat_seconds_are_split_across_its_clips(self):
+        plan = adspec.compile_to_story(self._spec(panels=2, duration=20))
+        beat = [b for b in plan["beats"] if b["id"] == "solution"][0]
+        self.assertEqual(beat["clips"], 2)
+        self.assertEqual(beat["clip_durations"], [10, 10])
+        self.assertEqual(sum(beat["clip_durations"]), beat["duration"])
+
+    def test_a_beat_may_exceed_the_single_clip_cap_when_it_has_panels(self):
+        # 20s is impossible for one H3 clip (15s max) and fine for two.
+        adspec.compile_to_story(self._spec(panels=2, duration=20))
+        with self.assertRaises(adspec.AdSpecError):
+            spec = spec_for("problem-solution")
+            spec["beats"][2]["duration"] = 20      # one panel, still capped at 15
+            spec["duration"] = 36
+            adspec.compile_to_story(spec)
+
+    def test_split_duration_gives_remainder_to_the_earliest_clips(self):
+        self.assertEqual(adspec.split_duration(21, 2), [11, 10])
+        self.assertEqual(adspec.split_duration(20, 3), [7, 7, 6])
+
+    def test_split_duration_rejects_an_impossible_split(self):
+        with self.assertRaises(adspec.AdSpecError):
+            adspec.split_duration(40, 2)           # 20s per clip, over the 15s cap
+        with self.assertRaises(adspec.AdSpecError):
+            adspec.split_duration(6, 2)            # 3s per clip, under the 4s floor
+
+    def test_panel_and_panels_are_mutually_exclusive(self):
+        spec = spec_for("problem-solution")
+        spec["beats"][2]["panels"] = ["a", "b"]
+        with self.assertRaises(adspec.AdSpecError):
+            adspec.validate_ad_spec(spec)
+
+    def test_panels_needs_at_least_two(self):
+        spec = spec_for("problem-solution")
+        spec["beats"][2].pop("panel")
+        spec["beats"][2]["panels"] = ["only one"]
+        with self.assertRaises(adspec.AdSpecError):
+            adspec.validate_ad_spec(spec)
+
+    def test_actions_map_one_per_panel(self):
+        spec = self._spec()
+        spec["beats"][2]["actions"] = ["first move", "second move"]
+        plan = adspec.compile_to_story(spec)
+        shots = {s["id"]: s for s in plan["story"]["shots"]}
+        self.assertEqual(shots["solution"]["action"], "first move")
+        self.assertEqual(shots["solution_2"]["action"], "second move")
+
+    def test_dialogue_lands_on_the_first_clip_only(self):
+        spec = self._spec()
+        spec["beats"][2]["say"] = "One lamp."
+        plan = adspec.compile_to_story(spec)
+        shots = {s["id"]: s for s in plan["story"]["shots"]}
+        self.assertIn("sound", shots["solution"])
+        self.assertNotIn("sound", shots["solution_2"])
+
+
+# ─── TRANSITIONS, EFFECTS, OVERLAYS ──────────────────────────
+
+class TestTransitionPlan(unittest.TestCase):
+    def test_default_applies_to_every_cut_but_never_the_first_clip(self):
+        spec = spec_for("problem-solution")
+        spec["transition"] = {"type": "fade", "duration": 0.4}
+        plan = adspec.compile_to_story(spec)
+        self.assertIsNone(plan["transitions"][0])
+        self.assertTrue(all(t and t["type"] == "fade" for t in plan["transitions"][1:]))
+
+    def test_a_beat_overrides_the_default(self):
+        spec = spec_for("problem-solution")
+        spec["transition"] = {"type": "fade", "duration": 0.4}
+        spec["beats"][2]["transition"] = {"type": "circleopen", "duration": 0.6}
+        plan = adspec.compile_to_story(spec)
+        self.assertEqual(plan["transitions"][2]["type"], "circleopen")
+
+    def test_clips_inside_one_beat_never_get_a_transition(self):
+        """A bridge cut ends on the frame the next clip opens on. Cross-dissolving that is
+        a frame with itself: it costs runtime and shows nothing."""
+        spec = spec_for("problem-solution")
+        spec["transition"] = {"type": "fade", "duration": 0.4}
+        spec["beats"][2].pop("panel")
+        spec["beats"][2]["panels"] = ["part one", "part two"]
+        spec["beats"][2]["duration"] = 20
+        spec["duration"] = 36
+        plan = adspec.compile_to_story(spec)
+        beat = [b for b in plan["beats"] if b["id"] == "solution"][0]
+        self.assertIsNotNone(plan["transitions"][beat["first_clip"]])
+        self.assertIsNone(plan["transitions"][beat["first_clip"] + 1])
+
+    def test_transition_on_the_first_beat_is_rejected(self):
+        spec = spec_for("problem-solution")
+        spec["beats"][0]["transition"] = {"type": "fade"}
+        with self.assertRaises(adspec.AdSpecError):
+            adspec.validate_ad_spec(spec)
+
+    def test_unknown_transition_name_is_rejected_with_a_suggestion(self):
+        spec = spec_for("problem-solution")
+        spec["beats"][1]["transition"] = {"type": "fadde"}
+        with self.assertRaises(adspec.AdSpecError) as ctx:
+            adspec.validate_ad_spec(spec)
+        self.assertIn("fade", str(ctx.exception))
+
+    def test_non_positive_transition_duration_is_rejected(self):
+        spec = spec_for("problem-solution")
+        spec["beats"][1]["transition"] = {"type": "fade", "duration": 0}
+        with self.assertRaises(adspec.AdSpecError):
+            adspec.validate_ad_spec(spec)
+
+    def test_overlap_total_is_warned_about(self):
+        spec = spec_for("problem-solution")
+        spec["transition"] = {"type": "fade", "duration": 0.5}
+        plan = adspec.compile_to_story(spec)
+        self.assertTrue(any("overlap" in w for w in plan["warnings"]))
+
+
+class TestEffectPlan(unittest.TestCase):
+    def test_effects_land_on_their_beat(self):
+        spec = spec_for("problem-solution")
+        spec["beats"][1]["effects"] = [{"name": "glitch", "at": 0.5, "duration": 0.3}]
+        plan = adspec.compile_to_story(spec)
+        self.assertEqual([e["name"] for e in plan["effects"][1]], ["glitch"])
+        self.assertEqual(plan["effects"][0], [])
+
+    def test_effect_time_is_rebased_onto_the_clip_that_contains_it(self):
+        spec = spec_for("problem-solution")
+        spec["beats"][2].pop("panel")
+        spec["beats"][2]["panels"] = ["part one", "part two"]
+        spec["beats"][2]["duration"] = 20
+        spec["duration"] = 36
+        # 12s into a 20s beat split 10/10 is 2s into the SECOND clip.
+        spec["beats"][2]["effects"] = [{"name": "flash", "at": 12.0, "duration": 0.2}]
+        plan = adspec.compile_to_story(spec)
+        beat = [b for b in plan["beats"] if b["id"] == "solution"][0]
+        self.assertEqual(plan["effects"][beat["first_clip"]], [])
+        second = plan["effects"][beat["first_clip"] + 1]
+        self.assertEqual(len(second), 1)
+        self.assertAlmostEqual(second[0]["at"], 2.0)
+
+    def test_unknown_effect_name_is_rejected(self):
+        spec = spec_for("problem-solution")
+        spec["beats"][1]["effects"] = [{"name": "zoom_punsh"}]
+        with self.assertRaises(adspec.AdSpecError) as ctx:
+            adspec.validate_ad_spec(spec)
+        self.assertIn("zoom_punch", str(ctx.exception))
+
+    def test_effects_must_be_a_list_of_objects(self):
+        spec = spec_for("problem-solution")
+        spec["beats"][1]["effects"] = {"name": "flash"}
+        with self.assertRaises(adspec.AdSpecError):
+            adspec.validate_ad_spec(spec)
+
+
+class TestOverlayPlan(unittest.TestCase):
+    def test_beat_reference_resolves_to_that_beats_window(self):
+        spec = spec_for("problem-solution")
+        spec["overlays"] = [{"badge": "50% OFF", "beat": "cta"}]
+        plan = adspec.compile_to_story(spec)
+        cta = [b for b in plan["beats"] if b["id"] == "cta"][0]
+        self.assertEqual(plan["overlays"][0]["start"], cta["start"])
+        self.assertEqual(plan["overlays"][0]["end"], cta["end"])
+
+    def test_explicit_window_is_kept(self):
+        spec = spec_for("problem-solution")
+        spec["overlays"] = [{"badge": "X", "start": 2.0, "end": 5.0}]
+        plan = adspec.compile_to_story(spec)
+        self.assertEqual((plan["overlays"][0]["start"], plan["overlays"][0]["end"]), (2.0, 5.0))
+
+    def test_unknown_beat_reference_is_rejected(self):
+        spec = spec_for("problem-solution")
+        spec["overlays"] = [{"badge": "X", "beat": "nope"}]
+        with self.assertRaises(adspec.AdSpecError):
+            adspec.validate_ad_spec(spec)
+
+    def test_beat_and_explicit_window_are_mutually_exclusive(self):
+        spec = spec_for("problem-solution")
+        spec["overlays"] = [{"badge": "X", "beat": "cta", "start": 1.0, "end": 2.0}]
+        with self.assertRaises(adspec.AdSpecError):
+            adspec.validate_ad_spec(spec)
+
+    def test_an_overlay_needs_something_to_draw(self):
+        spec = spec_for("problem-solution")
+        spec["overlays"] = [{"beat": "cta"}]
+        with self.assertRaises(adspec.AdSpecError):
+            adspec.validate_ad_spec(spec)
+
+    def test_overlay_past_the_film_end_warns(self):
+        spec = spec_for("problem-solution")
+        spec["overlays"] = [{"badge": "X", "start": 1.0, "end": spec["duration"] + 5}]
+        plan = adspec.compile_to_story(spec)
+        self.assertTrue(any("past the" in w for w in plan["warnings"]))
+
+
+class TestRetimeWithTransitions(unittest.TestCase):
+    BEATS = [{"id": "a", "start": 0.0, "end": 6.0, "duration": 6, "clips": 1},
+             {"id": "b", "start": 6.0, "end": 12.0, "duration": 6, "clips": 1},
+             {"id": "c", "start": 12.0, "end": 18.0, "duration": 6, "clips": 1}]
+    CUES = [{"start": 0.0, "end": 6.0, "text": "one"},
+            {"start": 6.0, "end": 12.0, "text": "two"},
+            {"start": 12.0, "end": 18.0, "text": "three"}]
+
+    def test_transitions_shorten_the_mapped_timeline(self):
+        actual = [6.0, 6.0, 6.0]
+        trans = [None, {"type": "fade", "duration": 0.4}, {"type": "fade", "duration": 0.4}]
+        out = adspec.retime_cues(self.CUES, self.BEATS, actual, trans)
+        self.assertAlmostEqual(out[-1]["end"], 18.0 - 0.8, places=3)
+
+    def test_without_transitions_the_timeline_is_the_plain_sum(self):
+        out = adspec.retime_cues(self.CUES, self.BEATS, [6.0, 6.0, 6.0])
+        self.assertAlmostEqual(out[-1]["end"], 18.0, places=3)
+
+    def test_multi_clip_beats_fold_their_clip_durations(self):
+        beats = [{"id": "a", "start": 0.0, "end": 6.0, "duration": 6, "clips": 1},
+                 {"id": "b", "start": 6.0, "end": 26.0, "duration": 20, "clips": 2}]
+        cues = [{"start": 6.0, "end": 26.0, "text": "long"}]
+        out = adspec.retime_cues(cues, beats, [6.0, 10.0, 10.0])
+        self.assertAlmostEqual(out[0]["start"], 6.0, places=3)
+        self.assertAlmostEqual(out[0]["end"], 26.0, places=3)
+
+    def test_clip_count_mismatch_is_rejected(self):
+        with self.assertRaises(adspec.AdSpecError):
+            adspec.retime_cues(self.CUES, self.BEATS, [6.0, 6.0])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
