@@ -565,6 +565,29 @@ class TestPromptCompilation(unittest.TestCase):
         prompt = sb.compile_shot_prompt(sb.clip_plan(spec)[0], spec)
         self.assertNotIn(sb.NO_TEXT_GUARD, prompt)
 
+    def test_board_carries_the_guard_by_default(self):
+        self.assertIn(sb.NO_TEXT_GUARD, sb.compile_board_prompt(a_spec()))
+
+    def test_allow_text_drops_the_guard_from_the_board_too(self):
+        """The board is the ONLY call that draws the letters, so a film about text that
+        still gags its board is forbidding the one image that has to render them."""
+        prompt = sb.compile_board_prompt(a_spec(allow_text=True))
+        self.assertNotIn(sb.NO_TEXT_GUARD, prompt)
+
+    def test_one_shot_allowing_text_frees_the_whole_board(self):
+        """allow_text is per-shot as well as per-spec, but the board is a single image for
+        every cell — it cannot gag one cell and not another."""
+        spec = a_spec()
+        spec["shots"][1]["allow_text"] = True
+        self.assertNotIn(sb.NO_TEXT_GUARD, sb.compile_board_prompt(spec))
+
+    def test_board_always_bans_grid_artefacts(self):
+        """Cell numbers and captions are stationery, not subject matter — allow_text must
+        not readmit them."""
+        for spec in (a_spec(), a_spec(allow_text=True)):
+            self.assertIn("No cell numbers, no captions, no speech bubbles, no borders.",
+                          sb.compile_board_prompt(spec))
+
     def test_dialogue_uses_the_tagged_syntax(self):
         spec = a_spec()
         spec["shots"][0]["sound"] = {

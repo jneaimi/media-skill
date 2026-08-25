@@ -317,9 +317,18 @@ def compile_board_prompt(spec: dict) -> str:
             f"Remaining {filler} cell(s): the same environment, empty of characters."
         )
 
-    lines.append(
-        "No cell numbers, no captions, no speech bubbles, no borders. " + NO_TEXT_GUARD
+    # The grid-artefact ban always applies — cell numbers and captions are stationery, not
+    # subject matter. The no-text guard is different: a film ABOUT text (a chalkboard of
+    # letters, a sign, a scoreboard) needs the model to draw it, and the board is the only
+    # call that ever does. Honour allow_text here exactly as compile_shot_prompt does, or
+    # the one image that has to render the letters is the one image forbidden to.
+    allow_text = spec.get("allow_text", False) or any(
+        shot.get("allow_text", False) for shot in shots
     )
+    tail = "No cell numbers, no captions, no speech bubbles, no borders."
+    if not allow_text:
+        tail += " " + NO_TEXT_GUARD
+    lines.append(tail)
     return "\n".join(lines)
 
 
