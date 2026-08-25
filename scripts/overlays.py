@@ -404,7 +404,21 @@ def _canvas_size(ov: Overlay, t: float, frame_w: int, frame_h: int,
     """
     w, h = _scaled_size(ov, t, frame_w, asset_w, asset_h)
     if _track_for(ov, "rotation") is None and float(ov.rotation) == 0.0:
-        return w, h
+        if _track_for(ov, "scale") is None:
+            return w, h
+        # A SCALE TRACK NEEDS A CONSTANT CANVAS FOR THE SAME REASON ROTATION DOES.
+        # overlay negotiates its input link ONCE, at the first frame it receives, and
+        # `scale=...:eval=frame` never renegotiates it. A track that opens at 0 hands
+        # overlay a 4x4 link and every later frame is composited at 4x4 — the graphic
+        # simply never appears. ffmpeg says so plainly at verbose level:
+        #   [Parsed_overlay_2] main w:768 h:1376 overlay w:4 h:4
+        # Early windows survived this by luck, when a link reinit happened to land in
+        # time; a badge at 25s on a 30s film did not, which is why every test passed and
+        # the finished ad had no badge on it.
+        times = _sample_times(ov.start, ov.end)
+        wmax = max(_scaled_size(ov, ts, frame_w, asset_w, asset_h)[0] for ts in times)
+        hmax = max(_scaled_size(ov, ts, frame_w, asset_w, asset_h)[1] for ts in times)
+        return _even(wmax), _even(hmax)
     if not _is_animated(ov):
         ang = math.radians(float(ov.rotation))
         cw = math.ceil(w * abs(math.cos(ang)) + h * abs(math.sin(ang)))
@@ -444,14 +458,28 @@ def _const_ladder(times: list[float], values: list[float]) -> str:
 
 
 def _linear_ladder(times: list[float], values: list[float]) -> str:
-    """Same ladder shape, but each rung linearly interpolates to the next sample."""
+    """Same ladder shape, but each rung linearly interpolates to the next sample.
+
+    The leading clamp is not decoration. Every rung below is bounded above by the next
+    `lt(t, …)` and below by the previous branch having already been taken — except the
+    FIRST, which without this guard extrapolates its segment backwards for all t before
+    the window. A five-second overlay starting at 25s is sampled in 0.078s steps, so at
+    t=0 the opening rung evaluates (0-25)/0.078 = -320 times the value delta and hands
+    `scale` a width of about -2400. ffmpeg reads a negative width as a divisibility hint
+    rather than a size, and the overlay silently never appears.
+
+    It is magnitude-dependent, which is what made it look like it worked: the same
+    overlay at 2s extrapolates to only -7800 and renders fine, so every test with an
+    early window passed while a late one drew nothing. `_const_ladder` was never affected
+    — its first branch already returns values[0] for anything below the window.
+    """
     expr = _fmt(values[-1])
     for i in range(len(times) - 2, -1, -1):
         t0, t1 = times[i], times[i + 1]
         v0, v1 = values[i], values[i + 1]
         seg = f"{_fmt(v0)}+({_fmt(v1)}-({_fmt(v0)}))*(t-{t0:.3f})/{t1 - t0:.3f}"
         expr = f"if(lt(t,{t1:.3f}),{seg},{expr})"
-    return expr
+    return f"if(lt(t,{times[0]:.3f}),{_fmt(values[0])},{expr})"
 
 
 def _sampled_expr(ov: Overlay, values: list[float], what: str) -> str:
@@ -566,6 +594,15 @@ def overlay_filter(ov: Overlay, *, index: int, frame_w: int, frame_h: int,
         w_expr = _sampled_expr(ov, ws, "scale track (width)")
         h_expr = _sampled_expr(ov, hs, "scale track (height)")
         chain.append(f"scale=w='{w_expr}':h='{h_expr}':eval=frame")
+        if not has_rotate:
+            # Pin the link size that overlay negotiates (see _canvas_size). The scaled
+            # graphic varies inside a fixed transparent canvas instead of resizing the
+            # frame under overlay's feet. eval=frame so the centring recomputes as the
+            # content grows; a transparent pad colour so nothing is added to the picture.
+            cw, ch = _canvas_size(ov, ov.start, frame_w, frame_h, asset_w, asset_h)
+            chain.append(
+                f"pad={cw}:{ch}:'(ow-iw)/2':'(oh-ih)/2':color=#00000000:eval=frame"
+            )
     else:
         w, h = _scaled_size(ov, ov.start, frame_w, asset_w, asset_h)
         chain.append(f"scale={w}:{h}")

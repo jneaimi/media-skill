@@ -428,8 +428,9 @@ class TestOverlayFilter(TmpDirMixin, unittest.TestCase):
                          easing="elastic_out")
         o = _overlay(self.asset, start=0.0, end=10.0, tracks=[track])
         frag = self.frag(o)
-        # w, h, x, y ladders — each capped at MAX_RUNGS rungs.
-        self.assertEqual(frag.count("if(lt(t,"), 4 * ov.MAX_RUNGS)
+        # w, h, x, y ladders — each capped at MAX_RUNGS rungs, plus the one leading
+        # clamp that stops the first rung extrapolating backwards before the window.
+        self.assertEqual(frag.count("if(lt(t,"), 4 * (ov.MAX_RUNGS + 1))
         self.assertTrue(any("MAX_RUNGS" in n for n in o.notes))
 
     def test_short_animation_stays_constant_rungs(self):
@@ -948,6 +949,86 @@ class TestAnimatedCombinationOrdering(TmpDirMixin, unittest.TestCase):
             "The animated-scale/animated-alpha ordering has regressed: geq is sampling "
             "a stale plane and painting a second offset copy."
         )
+
+
+class TestAnimatedScaleCanvas(TmpDirMixin, unittest.TestCase):
+    """overlay negotiates its input link ONCE and scale=eval=frame never renegotiates it.
+
+    A scale track opening at 0 hands overlay a 4x4 link, and every later frame composites
+    at 4x4 — the graphic never appears at all. ffmpeg states it at verbose level:
+        [Parsed_overlay_2] main w:768 h:1376 overlay w:4 h:4
+    Early windows survived by luck, when a link reinit happened to land in time; the same
+    badge at 25s on a 30s film drew nothing. So the varying scale rides inside a constant
+    transparent canvas instead of resizing the frame under overlay's feet.
+    """
+
+    def _animated(self, asset):
+        return ov.Overlay(asset=asset, start=25.0, end=30.0, anchor="center",
+                          scale=0.40, fade_in=0.25, fade_out=0.4,
+                          tracks=[ov.Track("scale", [ov.Keyframe(26.0, 0.0),
+                                                     ov.Keyframe(26.45, 1.0)],
+                                           "back_out")])
+
+    def test_a_scale_track_pads_to_a_constant_canvas(self):
+        asset = self.dir / "b.png"
+        ov.badge("50% OFF", asset, style="starburst")
+        chain = ov.overlay_filter(self._animated(asset), index=0, frame_w=768,
+                                  frame_h=1376, safe=None, fps=24,
+                                  in_label="0:v", out_label="v")
+        self.assertIn("eval=frame", chain)
+        self.assertIn("pad=", chain)
+        self.assertLess(chain.index("scale=w="), chain.index("pad="),
+                        "the pad must come AFTER the per-frame scale")
+
+    def test_the_canvas_is_the_tracks_largest_size(self):
+        asset = self.dir / "b.png"
+        ov.badge("50% OFF", asset, style="starburst")
+        o = self._animated(asset)
+        aw, ah = ov._asset_size(asset)
+        canvas = ov._canvas_size(o, o.start, 768, 1376, aw, ah)
+        biggest = max(ov._scaled_size(o, t, 768, aw, ah)[0]
+                      for t in ov._sample_times(o.start, o.end))
+        self.assertGreaterEqual(canvas[0], biggest)
+
+    def test_a_static_overlay_gets_no_pad(self):
+        asset = self.dir / "b.png"
+        ov.badge("X", asset)
+        o = ov.Overlay(asset=asset, start=1.0, end=3.0, anchor="center", scale=0.4)
+        chain = ov.overlay_filter(o, index=0, frame_w=768, frame_h=1376, safe=None,
+                                  fps=24, in_label="0:v", out_label="v")
+        self.assertNotIn("pad=", chain)
+
+    def test_the_linear_ladder_clamps_below_its_window(self):
+        """Without the leading clamp the first rung extrapolates backwards forever:
+        a 5s window starting at 25s evaluates (0-25)/0.078 at t=0."""
+        times = [25.0 + i * 0.078 for i in range(70)]
+        values = [float(i) for i in range(70)]
+        expr = ov._linear_ladder(times, values)
+        self.assertTrue(expr.startswith("if(lt(t,25.000),0"),
+                        f"ladder must clamp below its window, got {expr[:60]}")
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"),
+                         "ffmpeg not installed")
+    def test_a_late_window_actually_draws(self):
+        asset = self.dir / "b.png"
+        ov.badge("50% OFF", asset, style="starburst", fill="#d4713a")
+        bg = self.dir / "bg.mp4"
+        subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                        "-f", "lavfi", "-i", "color=c=black:s=768x1376:r=24", "-t", "31",
+                        "-c:v", "libx264", "-pix_fmt", "yuv420p", str(bg)], check=True)
+        out = self.dir / "out.mp4"
+        ov.burn(bg, [self._animated(asset)], out, safe=None)
+        frame = self.dir / "f.png"
+        subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                        "-ss", "27.5", "-i", str(out), "-vframes", "1", str(frame)],
+                       check=True)
+        from PIL import Image
+        im = Image.open(frame).convert("L")
+        px = im.load()
+        lit = sum(1 for y in range(0, im.size[1], 4) for x in range(0, im.size[0], 4)
+                  if px[x, y] > 40)
+        self.assertGreater(lit, 500,
+                           "a badge with a scale track at 25s on a 31s film drew nothing")
 
 
 if __name__ == "__main__":
