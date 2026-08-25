@@ -795,7 +795,44 @@ def apply_to(clip: Path, effects: list[Effect], output: Path) -> Path:
         args += ["-c:a", "copy"]
     args.append(str(output))
     run_ffmpeg(args, f"apply {', '.join(e.name for e in effects)}")
+
+    # An effect that is not supposed to change the length MUST NOT change the length.
+    # zoompan carries an `fps` option that re-times rather than resamples: hand it fps=30
+    # for 24fps footage and it replays the same 158 frames at 30, so a 6.583s clip comes
+    # back 5.267s — exactly frames/30. Nothing errors, the file is valid, and the loss
+    # only surfaces much later as a film whose video stream ends before its audio.
+    # Caught in a real ad, where it silently truncated the last two shots.
+    if not changes_dur and clip_dur is not None:
+        after = duration_of(output)
+        if after is not None and abs(after - clip_dur) > 0.05:
+            raise EffectError(
+                f"{', '.join(e.name for e in effects)} changed the clip from "
+                f"{clip_dur:g}s to {after:g}s, and none of these effects may alter "
+                "duration.\n"
+                "  The usual cause is an `fps` argument that differs from the clip's own "
+                "rate — zoompan re-times to it instead of resampling.\n"
+                f"  Pass fps={_probe_fps(clip) or 'the clip rate'}, or omit fps entirely."
+            )
     return output
+
+
+def _probe_fps(path: Path) -> float | None:
+    """The clip's real frame rate, so callers can stop guessing it."""
+    if shutil.which("ffprobe") is None:
+        return None
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v",
+         "-show_entries", "stream=avg_frame_rate", "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True,
+    )
+    text = result.stdout.strip().splitlines()[0].rstrip(",") if result.stdout.strip() else ""
+    if "/" not in text:
+        return None
+    num, _, den = text.partition("/")
+    try:
+        return float(num) / float(den) if float(den) else None
+    except (ValueError, ZeroDivisionError):
+        return None
 
 
 def preview(effect: Effect, output: Path, *, seconds: float = 2.0,

@@ -784,5 +784,52 @@ class TestWhipAndFlash(unittest.TestCase):
         self.assertNotIn("random(", effect.filters)
 
 
+@unittest.skipUnless(HAVE_FFMPEG, "ffmpeg not installed")
+class TestDurationIsPreserved(unittest.TestCase):
+    """An effect that is not supposed to change the length must not change the length.
+
+    zoompan's `fps` option RE-TIMES rather than resamples: hand it fps=30 for 24fps
+    footage and it replays the same 158 frames at 30, so a 6.583s clip comes back
+    5.267s — exactly frames/30. Nothing errors and the file is valid, so the loss only
+    surfaces much later as a film whose video stream ends before its audio. It silently
+    truncated the last two shots of a real ad before this check existed.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+        self.clip = make_clips(self.dir, n=1, seconds=3, fps=24, audio=False)[0]
+
+    def test_probe_fps_reads_the_real_rate(self):
+        self.assertAlmostEqual(ef._probe_fps(self.clip), 24.0, places=3)
+
+    def test_a_mismatched_fps_is_rejected_rather_than_silently_retiming(self):
+        effect = ef.build("zoom_punch", width=384, height=384, at=0.5,
+                          duration=0.5, fps=30)
+        with self.assertRaises(ef.EffectError) as ctx:
+            ef.apply_to(self.clip, [effect], self.dir / "out.mp4")
+        message = str(ctx.exception)
+        self.assertIn("duration", message)
+        self.assertIn("fps", message)
+
+    def test_the_clips_own_fps_preserves_duration(self):
+        effect = ef.build("zoom_punch", width=384, height=384, at=0.5,
+                          duration=0.5, fps=24)
+        out = ef.apply_to(self.clip, [effect], self.dir / "ok.mp4")
+        self.assertAlmostEqual(ef.duration_of(out), ef.duration_of(self.clip), delta=0.05)
+
+    def test_ken_burns_at_the_clip_rate_preserves_duration(self):
+        effect = ef.build("ken_burns", direction="in", zoom_from=1.0, zoom_to=1.2,
+                          duration=3.0, width=384, height=384, fps=24)
+        out = ef.apply_to(self.clip, [effect], self.dir / "kb.mp4")
+        self.assertAlmostEqual(ef.duration_of(out), ef.duration_of(self.clip), delta=0.05)
+
+    def test_effects_that_may_change_duration_are_still_allowed(self):
+        effect = ef.build("freeze_frame", at=1.0, duration=0.5)
+        out = ef.apply_to(self.clip, [effect], self.dir / "fz.mp4")
+        self.assertGreater(ef.duration_of(out), ef.duration_of(self.clip))
+
+
 if __name__ == "__main__":
     unittest.main()
