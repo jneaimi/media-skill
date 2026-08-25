@@ -377,6 +377,10 @@ Review the rushes there, spend on `--only <beat>` re-rolls if needed, and only t
 motion work. On the story path `story assemble` is already a plain concat, so it *is* the
 rough cut — no flags to switch off.
 
+**B8 works on the story path even though `ad voice` is named for ads** — it takes any mp4 and
+muxes a voiceover or music bed onto it, so a story film reaches the sound gate the same way an
+ad does. It is the one ad-prefixed command that is really a general tool.
+
 **Story mode runs the same gates** minus A4, B2 and B7 — product refs, the safe-zone preview
 and the motion layer are ad-only phases. `story assemble` is a plain concat, so a story film
 that wants transitions or burned captions has to be authored as an ad; there is no
