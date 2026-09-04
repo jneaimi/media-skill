@@ -7,13 +7,22 @@ description: "Generate images, video clips, voiceovers, and text overlays. Use w
 
 Generate images, video clips, voiceovers, and text overlays using AI. All output goes to `~/generated_media/` by default (override with `--output`).
 
-## Script Location
+## Skill root
 
-```
-~/.claude/skills/media/scripts/generate_media.py
+Every command below is written against `$MEDIA` — the directory holding this `SKILL.md`. Export it
+once per session rather than hardcoding a host's path, because the install location differs by CLI:
+`~/.agents/skills/media` is the cross-CLI root (Claude Code also surfaces it at
+`~/.claude/skills/media`; Codex's skill-installer uses `~/.codex/skills/media`).
+
+```bash
+for d in ~/.agents/skills/media ~/.claude/skills/media ~/.codex/skills/media; do
+  [ -f "$d/SKILL.md" ] && export MEDIA="$d" && break
+done
+echo "$MEDIA"    # fails loudly here rather than silently in a paid call
 ```
 
-All commands: `uv run ~/.claude/skills/media/scripts/generate_media.py <subcommand> [args]`
+The script itself is `$MEDIA/scripts/generate_media.py`, so all commands read:
+`uv run $MEDIA/scripts/generate_media.py <subcommand> [args]`
 
 ## CRITICAL: Arabic Text in Images
 
@@ -23,10 +32,10 @@ AI image generators **CANNOT render Arabic text correctly**. They produce garble
 
 ```bash
 # Step 1: Background image (no text)
-uv run ~/.claude/skills/media/scripts/generate_media.py image "Dark dramatic scene, no text" --aspect 16:9 --prefix bg
+uv run $MEDIA/scripts/generate_media.py image "Dark dramatic scene, no text" --aspect 16:9 --prefix bg
 
 # Step 2: Add Arabic text overlay
-uv run ~/.claude/skills/media/scripts/generate_media.py overlay ~/generated_media/bg_*.png \
+uv run $MEDIA/scripts/generate_media.py overlay ~/generated_media/bg_*.png \
   --text "تحذير!" "احذر قبل أن تشتري" \
   --position top bottom --size 80 --stroke-width 4 --prefix final
 ```
@@ -37,19 +46,19 @@ uv run ~/.claude/skills/media/scripts/generate_media.py overlay ~/generated_medi
 
 ```bash
 # Basic — fast and cheap
-uv run ~/.claude/skills/media/scripts/generate_media.py image "Bold YouTube thumbnail about AI tools" --aspect 16:9
+uv run $MEDIA/scripts/generate_media.py image "Bold YouTube thumbnail about AI tools" --aspect 16:9
 
 # High quality
-uv run ~/.claude/skills/media/scripts/generate_media.py image "Detailed product mockup" --model pro --size 4K
+uv run $MEDIA/scripts/generate_media.py image "Detailed product mockup" --model pro --size 4K
 
 # With reference images
-uv run ~/.claude/skills/media/scripts/generate_media.py image "Product in this style" --reference brand.png logo.png
+uv run $MEDIA/scripts/generate_media.py image "Product in this style" --reference brand.png logo.png
 
 # Transparent background
-uv run ~/.claude/skills/media/scripts/generate_media.py image "Logo on transparent" --transparent
+uv run $MEDIA/scripts/generate_media.py image "Logo on transparent" --transparent
 
 # Multiple variations
-uv run ~/.claude/skills/media/scripts/generate_media.py image "Quote card design" --count 3 --aspect 1:1
+uv run $MEDIA/scripts/generate_media.py image "Quote card design" --count 3 --aspect 1:1
 ```
 
 **Models:**
@@ -81,22 +90,22 @@ it (`auto` uses the model's default). Adding a model does not change any existin
 
 ```bash
 # Unchanged — the original Veo path
-uv run ~/.claude/skills/media/scripts/generate_media.py video "Aerial shot of Dubai at sunset" --model fast --duration 4
+uv run $MEDIA/scripts/generate_media.py video "Aerial shot of Dubai at sunset" --model fast --duration 4
 
 # Hailuo 3 via OpenRouter (needs OPENROUTER_API_KEY)
-uv run ~/.claude/skills/media/scripts/generate_media.py video "A lighthouse beam sweeps the harbour" \
+uv run $MEDIA/scripts/generate_media.py video "A lighthouse beam sweeps the harbour" \
   --model hailuo-3 --duration 6 --aspect 21:9
 
 # Hailuo 3 direct — unlocks the cheaper 768P draft tier (needs MINIMAX_API_KEY)
-uv run ~/.claude/skills/media/scripts/generate_media.py video "..." \
+uv run $MEDIA/scripts/generate_media.py video "..." \
   --model hailuo-3 --provider minimax --resolution 768P --duration 4
 
 # First-and-last-frame: the clip starts here and lands there
-uv run ~/.claude/skills/media/scripts/generate_media.py video "She opens the umbrella as the camera pulls back" \
+uv run $MEDIA/scripts/generate_media.py video "She opens the umbrella as the camera pulls back" \
   --model hailuo-3 --first-frame a.png --last-frame b.png --duration 6
 
 # Style/identity references (a DIFFERENT mode — cannot combine with frames)
-uv run ~/.claude/skills/media/scripts/generate_media.py video "..." --model hailuo-3 --reference sara.png
+uv run $MEDIA/scripts/generate_media.py video "..." --model hailuo-3 --reference sara.png
 ```
 
 **Every paid call is gated.** The cost is printed and confirmed before submission; pass
@@ -118,7 +127,7 @@ through the video model: clip *i* runs from panel *i* to panel *i+1*, pinning bo
 every cut to art you approved. N panels → N-1 clips → one continuous film.
 
 ```bash
-S=~/.claude/skills/media/scripts/generate_media.py
+S=$MEDIA/scripts/generate_media.py
 uv run $S story plan     spec.json          # dry run: every prompt + total cost, no spend
 uv run $S story board    spec.json          # 1 image call → contact sheet → sliced panels
 uv run $S story shots    spec.json          # chain the panels into clips (cost-gated)
@@ -162,11 +171,11 @@ beat skeleton, a platform safe zone, a product that must stay on-model, and burn
 text (correct Arabic included).
 
 ```bash
-uv run ~/.claude/skills/media/scripts/generate_media.py ad plan     spec.json  # beats, prompts, cues, cost — spends nothing
-uv run ~/.claude/skills/media/scripts/generate_media.py ad preview  spec.json  # safe-zone guide + caption stills — spends nothing
-uv run ~/.claude/skills/media/scripts/generate_media.py ad board    spec.json  # one image call → the panel grid
-uv run ~/.claude/skills/media/scripts/generate_media.py ad shots    spec.json  # chain the panels into clips
-uv run ~/.claude/skills/media/scripts/generate_media.py ad assemble spec.json  # concat + burn the text
+uv run $MEDIA/scripts/generate_media.py ad plan     spec.json  # beats, prompts, cues, cost — spends nothing
+uv run $MEDIA/scripts/generate_media.py ad preview  spec.json  # safe-zone guide + caption stills — spends nothing
+uv run $MEDIA/scripts/generate_media.py ad board    spec.json  # one image call → the panel grid
+uv run $MEDIA/scripts/generate_media.py ad shots    spec.json  # chain the panels into clips
+uv run $MEDIA/scripts/generate_media.py ad assemble spec.json  # concat + burn the text
 ```
 
 **Formats** (`"format"`), each supplying an ordered beat skeleton and a duration split:
@@ -238,11 +247,12 @@ only stops at the invoice hands the human a finished ad built on choices they ne
 So the gates come in two acts: **direction**, which is cheap and decides everything, and
 **production**, which is expensive and merely executes.
 
-**The gates are yours, not the script's.** `AskUserQuestion` is a Claude-side tool; the CLI
-cannot call it. So always pass `--yes` and own the spend decision here instead. The script's
-own `_confirm_spend` prompt is blind — a dollar figure with no artwork beside it — and it
-hard-exits 2 in a non-TTY, which is a deadlock in an agent dispatch. It is a backstop, never
-the gate.
+**The gates are yours, not the script's.** Asking the human is a *host* affordance, not a script
+one: Claude Code has `AskUserQuestion`, Codex has no equivalent and you simply ask in prose, and a
+headless dispatch has nobody to ask at all. The CLI can call none of them. So always pass `--yes`
+and own the spend decision at whatever level you are running. The script's own `_confirm_spend`
+prompt is blind — a dollar figure with no artwork beside it — and it hard-exits 2 in a non-TTY,
+which is a deadlock in an agent dispatch. It is a backstop, never the gate.
 
 ### Gate 0 — ask the mode first, once
 
@@ -489,13 +499,13 @@ Skip any layer with `--no-transitions`, `--no-effects`, `--no-overlays`.
 
 ```bash
 # Inline text
-uv run ~/.claude/skills/media/scripts/generate_media.py voice --text "Welcome to our channel" --voice english-male
+uv run $MEDIA/scripts/generate_media.py voice --text "Welcome to our channel" --voice english-male
 
 # From file
-uv run ~/.claude/skills/media/scripts/generate_media.py voice --file script.txt --voice arabic-male
+uv run $MEDIA/scripts/generate_media.py voice --file script.txt --voice arabic-male
 
 # Quick draft
-uv run ~/.claude/skills/media/scripts/generate_media.py voice --text "Test narration" --model flash
+uv run $MEDIA/scripts/generate_media.py voice --text "Test narration" --model flash
 ```
 
 **Models:**
@@ -510,8 +520,8 @@ Recurring characters should have PINNED voices — chosen once by audition and s
 every episode. `cast/voices.json` is that record; look up the `voice_id` and pass it raw:
 
 ```bash
-VOICE=$(jq -r .cast.sara.voice_id ~/.claude/skills/media/cast/voices.json)
-uv run ~/.claude/skills/media/scripts/generate_media.py \
+VOICE=$(jq -r .cast.sara.voice_id $MEDIA/cast/voices.json)
+uv run $MEDIA/scripts/generate_media.py \
   voice --text "Run the doctor first." --voice "$VOICE" --model v3 --output OUT
 ```
 
@@ -532,15 +542,15 @@ Add proper Arabic or English text to any image with correct letter connections a
 
 ```bash
 # Basic overlay
-uv run ~/.claude/skills/media/scripts/generate_media.py overlay image.png \
+uv run $MEDIA/scripts/generate_media.py overlay image.png \
   --text "تحذير!" --position top --size 80
 
 # Multiple text lines
-uv run ~/.claude/skills/media/scripts/generate_media.py overlay image.png \
+uv run $MEDIA/scripts/generate_media.py overlay image.png \
   --text "العنوان" "النص الثانوي" --position top bottom --size 90 --stroke-width 4
 
 # With background box
-uv run ~/.claude/skills/media/scripts/generate_media.py overlay image.png \
+uv run $MEDIA/scripts/generate_media.py overlay image.png \
   --text "احذر قبل أن تشتري" --position center --bg-color "#CC000000" --bg-padding 25
 ```
 
@@ -548,7 +558,7 @@ uv run ~/.claude/skills/media/scripts/generate_media.py overlay image.png \
 
 ## Prompt Templates
 
-See `~/.claude/skills/media/prompt-templates.md` for 20+ ready-to-use templates covering thumbnails, quote cards, carousels, video hooks, b-roll, ads, LinkedIn banners, and Instagram stories.
+See `$MEDIA/prompt-templates.md` for 20+ ready-to-use templates covering thumbnails, quote cards, carousels, video hooks, b-roll, ads, LinkedIn banners, and Instagram stories.
 
 ## Cost Estimates
 
@@ -578,8 +588,8 @@ scenes become panels, words never get baked into pixels (speech bubbles are DOM 
 later, so copy edits touch no image).
 
 ```bash
-blender -b --python ~/.claude/skills/media/scripts/render_scene.py -- scene.json --quality draft
-blender -b --python ~/.claude/skills/media/scripts/render_scene.py -- scene.json --quality final --only wide
+blender -b --python $MEDIA/scripts/render_scene.py -- scene.json --quality draft
+blender -b --python $MEDIA/scripts/render_scene.py -- scene.json --quality final --only wide
 ```
 
 `--quality draft|final` (default `final`) trades render time for samples/resolution; `--only <camera>`
@@ -588,7 +598,7 @@ to the spec file's own directory, not the working directory. `blend` paths may p
 disk, including outside the repo — this is a trusted local tool, and the injection surface is the
 spec author's own machine. `render.outdir` is different: it's checked to stay under the spec file's
 own directory (exit 2 otherwise), since a spec shouldn't be able to write files elsewhere on disk.
-See `~/.claude/skills/media/scripts/render_scene.py`'s module docstring for the full schema; trimmed:
+See `$MEDIA/scripts/render_scene.py`'s module docstring for the full schema; trimmed:
 
 ```jsonc
 {
@@ -615,7 +625,7 @@ there, updating just that camera's frame entry so a mixed draft/final panel set 
 manifest is byte-stable across re-runs; pixel identity of the PNGs is not (Cycles sampling/denoise
 isn't bit-deterministic run to run).
 
-See `~/.claude/skills/media/examples/classroom-spec.json` for a complete working example. Its asset
+See `$MEDIA/examples/classroom-spec.json` for a complete working example. Its asset
 paths are relative to that file and only resolve on the machine that has the referenced CC0 character/
 furniture packs on disk — point `blend` paths at your own assets elsewhere.
 
