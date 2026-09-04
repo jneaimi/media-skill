@@ -1,6 +1,6 @@
 ---
 name: media
-description: "Generate images, video clips, voiceovers, and text overlays. Use when the user says /media, wants to generate an image, create a thumbnail, make a video clip, generate a voiceover, add text overlay to an image, or create visual/audio content. Also trigger on phrases like 'generate image', 'create thumbnail', 'make a video', 'voiceover', 'media assets', 'visual content', 'create an image of', or 'generate a picture', 'upload to deck', 'slide asset', 'vectorize', 'svg trace'."
+description: "Generate images, video clips, voiceovers, and text overlays. Use when the user says /media, wants to generate an image, create a thumbnail, make a video clip, generate a voiceover, add text overlay to an image, or create visual/audio content. Also trigger on phrases like 'generate image', 'create thumbnail', 'make a video', 'voiceover', 'media assets', 'visual content', 'create an image of', or 'generate a picture', 'vectorize', 'svg trace'."
 ---
 
 # Media Generator (/media)
