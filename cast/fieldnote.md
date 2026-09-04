@@ -8,7 +8,7 @@ a brief still comes before any image.
 ## The one-command generate
 
 ```bash
-uv run ~/.claude/skills/media/scripts/generate_media.py image \
+uv run $MEDIA/scripts/generate_media.py image \
     "<STYLE SCAFFOLD> Scene: <the brief's staging paragraph>. <NO-TEXT GUARD> Wide 16:9 composition." \
     --reference cast/refs/style-01.jpg cast/refs/ref-<character>.jpg … \
     --aspect 16:9 --prefix day5-<beat> --output <workdir>

@@ -43,21 +43,21 @@ picks the command, the model and the cost tier.
 optional and only needed for the backend you actually call.
 
 ```bash
-git clone https://github.com/jneaimi/media-skill.git ~/.claude/skills/media
+git clone https://github.com/jneaimi/media-skill.git ~/.agents/skills/media
 export GEMINI_API_KEY=...   # aistudio.google.com
 ```
 
 Your first image, about ten seconds and four cents:
 
 ```bash
-uv run ~/.claude/skills/media/scripts/generate_media.py \
+uv run $MEDIA/scripts/generate_media.py \
   image "A lighthouse at dusk, long exposure, muted palette" --aspect 16:9
 ```
 
 Every example below uses `$S` for that path. Set it once and the rest are copy-pasteable:
 
 ```bash
-S=~/.claude/skills/media/scripts/generate_media.py
+S=$MEDIA/scripts/generate_media.py
 ```
 
 Scripts declare their own dependencies inline, so `uv` installs them on first run. There is no
