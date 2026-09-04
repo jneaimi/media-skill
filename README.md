@@ -42,8 +42,14 @@ picks the command, the model and the cost tier.
 **Prerequisites:** [`uv`](https://docs.astral.sh/uv/) and a Gemini API key. Everything else is
 optional and only needed for the backend you actually call.
 
+Clone once, then symlink it into whichever CLI roots you use — Claude Code reads
+`~/.claude/skills`, Codex reads `~/.agents/skills` and `~/.codex/skills`, and none of them read
+each other's:
+
 ```bash
-git clone https://github.com/jneaimi/media-skill.git ~/.agents/skills/media
+git clone https://github.com/jneaimi/media-skill.git ~/dev/media-skill
+ln -s ~/dev/media-skill ~/.claude/skills/media    # Claude Code
+ln -s ~/dev/media-skill ~/.agents/skills/media    # Codex
 export GEMINI_API_KEY=...   # aistudio.google.com
 ```
 
